@@ -1,0 +1,7 @@
+*.class
+build/
+repository/
+app.aot
+.idea/
+*.iml
+.DS_Store
