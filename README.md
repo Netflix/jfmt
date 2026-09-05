@@ -78,9 +78,9 @@ jfmt --module-source-path src --module com.example.application,com.example.libra
 
 ### Semantic import normalization
 
-For files with satisfiable module requirements, `jfmt` uses javac attribution to expand wildcard imports and replace unambiguous qualified type references with explicit imports. Source files passed in one invocation are attributed together. If attribution then reports an unresolved type or another compiler error, `jfmt` reports the diagnostics, exits non-zero, and does not rewrite the files.
+For files with satisfiable module requirements, `jfmt` enters source declarations into javac's symbol table to expand wildcard imports and replace unambiguous qualified type references with explicit imports. Source files passed in one invocation are entered together, so their declarations are visible to one another. This does not attribute method bodies or reject unrelated compilation errors.
 
-If a named module has requirements that cannot be satisfied by the supplied compile-time module path, `jfmt` performs syntax-only formatting for that module and leaves wildcard and qualified references intact. Other satisfiable modules in the same invocation are still attributed.
+If a named module has requirements that cannot be satisfied by the supplied compile-time module path, `jfmt` performs syntax-only formatting for that module and leaves wildcard and qualified references intact. Other satisfiable modules still receive semantic import normalization.
 
 The standalone command accepts javac context options including `--class-path`, `--module-path`, `--upgrade-module-path`, `--source-path`, `--module-source-path`, `--system`, `--add-modules`, `--limit-modules`, `--add-exports`, `--add-reads`, `--patch-module`, `--release`, `--source`, and `--enable-preview`, along with their standard short aliases. Standard-input formatting is syntax-only because it has no source-path identity.
 
