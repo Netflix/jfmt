@@ -18,8 +18,10 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -28,10 +30,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import javax.lang.model.element.Element;
-import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.PackageElement;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.util.Elements;
 import javax.tools.Diagnostic;
 import javax.tools.Diagnostic.Kind;
 import javax.tools.DiagnosticCollector;
@@ -43,13 +45,29 @@ import javax.tools.ToolProvider;
 
 import com.sun.source.doctree.DocCommentTree;
 import com.sun.source.doctree.ReferenceTree;
+import com.sun.source.tree.AnnotatedTypeTree;
+import com.sun.source.tree.AnnotationTree;
+import com.sun.source.tree.ArrayTypeTree;
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.tree.DeconstructionPatternTree;
 import com.sun.source.tree.IdentifierTree;
 import com.sun.source.tree.ImportTree;
+import com.sun.source.tree.InstanceOfTree;
+import com.sun.source.tree.IntersectionTypeTree;
+import com.sun.source.tree.MemberReferenceTree;
 import com.sun.source.tree.MemberSelectTree;
-import com.sun.source.tree.Scope;
+import com.sun.source.tree.MethodInvocationTree;
+import com.sun.source.tree.MethodTree;
+import com.sun.source.tree.NewArrayTree;
+import com.sun.source.tree.NewClassTree;
+import com.sun.source.tree.ParameterizedTypeTree;
 import com.sun.source.tree.Tree;
+import com.sun.source.tree.TypeCastTree;
+import com.sun.source.tree.TypeParameterTree;
+import com.sun.source.tree.UnionTypeTree;
+import com.sun.source.tree.VariableTree;
+import com.sun.source.tree.WildcardTree;
 import com.sun.source.util.DocTreePath;
 import com.sun.source.util.DocTreePathScanner;
 import com.sun.source.util.DocTrees;
@@ -58,11 +76,9 @@ import com.sun.source.util.SourcePositions;
 import com.sun.source.util.TreePath;
 import com.sun.source.util.TreePathScanner;
 import com.sun.source.util.Trees;
+import com.sun.tools.javac.api.JavacTaskImpl;
 
-/**
- * Normalizes imports only when javac can attribute the complete set of source
- * files.
- */
+/** Normalizes imports using parsed source and javac's entered symbol table. */
 final class ImportNormalizer {
     private ImportNormalizer() {}
 
@@ -131,10 +147,10 @@ final class ImportNormalizer {
             List<Path> paths = List.copyOf(sources.keySet());
             var diagnostics = new DiagnosticCollector<JavaFileObject>();
             Iterable<? extends JavaFileObject> files = fileManager.getJavaFileObjectsFromPaths(paths);
-            JavacTask task = (JavacTask) compiler.getTask(null, fileManager, diagnostics, options, null, files);
+            JavacTaskImpl task = (JavacTaskImpl) compiler.getTask(null, fileManager, diagnostics, options, null, files);
             List<CompilationUnitTree> units = new ArrayList<>();
             task.parse().forEach(units::add);
-            task.analyze();
+            task.enter();
             if (hasErrors(diagnostics)) {
                 throw new AttributionException(diagnosticMessage(diagnostics));
             }
@@ -191,10 +207,10 @@ final class ImportNormalizer {
         try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(diagnostics, null, null)) {
             classOutput = Files.createTempDirectory("jfmt-attribution-");
             fileManager.setLocationFromPaths(StandardLocation.CLASS_OUTPUT, List.of(classOutput));
-            JavacTask task = (JavacTask) compiler.getTask(null, fileManager, diagnostics, options, null,
+            JavacTaskImpl task = (JavacTaskImpl) compiler.getTask(null, fileManager, diagnostics, options, null,
                     fileManager.getJavaFileObjectsFromPaths(List.of(descriptor)));
             task.parse();
-            task.analyze();
+            task.enter();
         } catch (IOException | RuntimeException e) {
             throw attributionFailure(e);
         } finally {
@@ -240,9 +256,13 @@ final class ImportNormalizer {
 
     private static String normalizeUnit(String source, CompilationUnitTree unit, Trees trees,
             JavacTask task) {
+        if (unit.getModule() != null) {
+            return source;
+        }
         SourcePositions positions = trees.getSourcePositions();
-        List<WildcardImport> wildcards = wildcardImports(unit, trees, task, positions);
-        var scanner = new UsageScanner(unit, trees, wildcards);
+        var resolver = new TypeResolver(unit, task.getElements());
+        List<WildcardImport> wildcards = wildcardImports(unit, resolver, positions);
+        var scanner = new UsageScanner(unit, trees, resolver, wildcards);
         scanner.scan(unit, null);
         scanner.scanDocComments(DocTrees.instance(task));
 
@@ -258,13 +278,18 @@ final class ImportNormalizer {
         Set<String> imports = new LinkedHashSet<>();
         List<Edit> edits = new ArrayList<>();
         for (WildcardImport wildcard : wildcards) {
+            if (wildcard.retain()) {
+                continue;
+            }
             for (String name : wildcard.usedNames()) {
                 imports.add(wildcard.importName(name));
             }
             edits.add(new Edit(wildcard.start(), wildcard.end(), ""));
         }
         for (QualifiedType candidate : scanner.qualifiedTypes) {
-            if (conflictingCandidateNames.contains(candidate.simpleName()) || candidate.scopeConflict() || scanner.hasConflictingType(candidate.simpleName(), candidate.qualifiedName())) {
+            if (conflictingCandidateNames.contains(candidate.simpleName())
+                    || candidate.scopeConflict()
+                    || scanner.hasConflictingType(candidate.simpleName(), candidate.qualifiedName())) {
                 continue;
             }
             edits.add(new Edit(candidate.start(), candidate.end(), candidate.simpleName()));
@@ -291,7 +316,7 @@ final class ImportNormalizer {
         return result.toString();
     }
 
-    private static List<WildcardImport> wildcardImports(CompilationUnitTree unit, Trees trees, JavacTask task,
+    private static List<WildcardImport> wildcardImports(CompilationUnitTree unit, TypeResolver resolver,
             SourcePositions positions) {
         List<WildcardImport> result = new ArrayList<>();
         for (ImportTree importTree : unit.getImports()) {
@@ -299,26 +324,19 @@ final class ImportNormalizer {
             if (!(qualified instanceof MemberSelectTree select) || !select.getIdentifier().contentEquals("*")) {
                 continue;
             }
-            TreePath expressionPath = TreePath.getPath(unit, select.getExpression());
-            Element owner = expressionPath == null ? null : trees.getElement(expressionPath);
-            if (importTree.isStatic() && !(owner instanceof TypeElement)) {
-                continue;
-            }
-            if (!importTree.isStatic() && !(owner instanceof PackageElement)) {
+            String ownerName = select.getExpression().toString();
+            Element owner = importTree.isStatic()
+                    ? resolver.type(ownerName)
+                    : resolver.elements.getPackageElement(ownerName);
+            if (importTree.isStatic() && !(owner instanceof TypeElement)
+                    || !importTree.isStatic() && !(owner instanceof PackageElement)) {
                 continue;
             }
             long start = positions.getStartPosition(unit, importTree);
             long end = positions.getEndPosition(unit, importTree);
-            if (start < 0 || end < start) {
-                continue;
+            if (start >= 0 && end >= start) {
+                result.add(new WildcardImport(importTree.isStatic(), owner, resolver.elements, start, end));
             }
-            Set<Element> members = new HashSet<>();
-            if (owner instanceof TypeElement type) {
-                members.addAll(task.getElements()
-                                   .getAllMembers(type));
-            }
-            result.add(new WildcardImport(importTree.isStatic(), owner, members, start, end,
-                    new LinkedHashSet<>()));
         }
         return result;
     }
@@ -338,24 +356,146 @@ final class ImportNormalizer {
         return 0;
     }
 
+    private static final class TypeResolver {
+        private final CompilationUnitTree unit;
+        private final Elements elements;
+        private final String packageName;
+        private final Map<String, Set<String>> explicitImports = new HashMap<>();
+        private final List<String> wildcardPackages = new ArrayList<>();
+        private final Map<String, TypeElement> resolvedNames = new HashMap<>();
+
+        TypeResolver(CompilationUnitTree unit, Elements elements) {
+            this.unit = unit;
+            this.elements = elements;
+            this.packageName = unit.getPackageName() == null ? "" : unit.getPackageName().toString();
+            for (ImportTree importTree : unit.getImports()) {
+                if (importTree.isStatic()) {
+                    continue;
+                }
+                String name = importTree.getQualifiedIdentifier().toString();
+                if (name.endsWith(".*")) {
+                    wildcardPackages.add(name.substring(0, name.length() - 2));
+                    continue;
+                }
+                int separator = name.lastIndexOf('.');
+                String simpleName = separator < 0 ? name : name.substring(separator + 1);
+                explicitImports.computeIfAbsent(simpleName, ignored -> new LinkedHashSet<>()).add(name);
+            }
+        }
+
+        TypeElement type(String name) {
+            if (resolvedNames.containsKey(name)) {
+                return resolvedNames.get(name);
+            }
+            Set<TypeElement> matches = new LinkedHashSet<>();
+            addType(matches, name);
+            if (!packageName.isEmpty()) {
+                addType(matches, packageName + "." + name);
+            }
+            for (Tree declaration : unit.getTypeDecls()) {
+                if (declaration instanceof ClassTree type && !type.getSimpleName().isEmpty()) {
+                    String owner = packageName.isEmpty()
+                            ? type.getSimpleName().toString()
+                            : packageName + "." + type.getSimpleName();
+                    addType(matches, owner + "." + name);
+                }
+            }
+            addType(matches, "java.lang." + name);
+
+            int separator = name.indexOf('.');
+            String first = separator < 0 ? name : name.substring(0, separator);
+            String suffix = separator < 0 ? "" : name.substring(separator);
+            for (String imported : explicitImports.getOrDefault(first, Set.of())) {
+                addType(matches, imported + suffix);
+            }
+            for (String wildcardPackage : wildcardPackages) {
+                addType(matches, wildcardPackage + "." + name);
+            }
+            TypeElement result = matches.size() == 1 ? matches.iterator().next() : null;
+            resolvedNames.put(name, result);
+            return result;
+        }
+
+        private void addType(Set<TypeElement> matches, String name) {
+            TypeElement type = elements.getTypeElement(name);
+            if (type != null) {
+                matches.add(type);
+            }
+        }
+
+        ResolvedType longestType(Tree tree) {
+            return longestType(tree, true);
+        }
+
+        ResolvedType longestType(Tree tree, boolean typeContext) {
+            List<String> names = new ArrayList<>();
+            List<Tree> prefixes = new ArrayList<>();
+            if (!qualifiedName(tree, names, prefixes)) {
+                return null;
+            }
+            for (int count = names.size(); count > 0; count--) {
+                String simpleName = names.get(count - 1);
+                if (!typeContext && !Character.isUpperCase(simpleName.codePointAt(0))) {
+                    continue;
+                }
+                TypeElement type = type(String.join(".", names.subList(0, count)));
+                if (type != null) {
+                    return new ResolvedType(type, prefixes.get(count - 1), count, names.size());
+                }
+            }
+            return null;
+        }
+
+        private static boolean qualifiedName(Tree tree, List<String> names, List<Tree> prefixes) {
+            if (tree instanceof IdentifierTree identifier) {
+                names.add(identifier.getName().toString());
+                prefixes.add(tree);
+                return true;
+            }
+            if (!(tree instanceof MemberSelectTree select)
+                    || select.getIdentifier().contentEquals("*")
+                    || !qualifiedName(select.getExpression(), names, prefixes)) {
+                return false;
+            }
+            names.add(select.getIdentifier().toString());
+            prefixes.add(tree);
+            return true;
+        }
+    }
+
     private static final class UsageScanner extends TreePathScanner<Void, Void> {
         private final CompilationUnitTree unit;
         private final Trees trees;
+        private final TypeResolver resolver;
         private final List<WildcardImport> wildcards;
         private final Map<String, Set<String>> typeBindings = new HashMap<>();
+        private final Set<String> valueBindings = new HashSet<>();
         private final List<QualifiedType> qualifiedTypes = new ArrayList<>();
         private boolean inImport;
 
-        UsageScanner(CompilationUnitTree unit, Trees trees, List<WildcardImport> wildcards) {
+        UsageScanner(CompilationUnitTree unit, Trees trees, TypeResolver resolver,
+                List<WildcardImport> wildcards) {
             this.unit = unit;
             this.trees = trees;
+            this.resolver = resolver;
             this.wildcards = wildcards;
+            new DeclarationScanner(resolver, typeBindings, valueBindings).scan(unit, null);
+            PackageElement sourcePackage = resolver.elements.getPackageElement(resolver.packageName);
+            if (sourcePackage != null) {
+                sourcePackage.getEnclosedElements().stream()
+                        .filter(element -> element instanceof TypeElement)
+                        .map(TypeElement.class::cast)
+                        .forEach(this::recordTypeBinding);
+            }
             for (ImportTree importTree : unit.getImports()) {
                 Tree imported = importTree.getQualifiedIdentifier();
                 if (imported instanceof MemberSelectTree select && select.getIdentifier().contentEquals("*")) {
                     continue;
                 }
-                recordTypeBinding(trees.getElement(TreePath.getPath(unit, imported)));
+                ResolvedType resolved = resolver.longestType(imported);
+                if (resolved != null && resolved.componentCount() == resolved.totalComponents()) {
+                    recordTypeBinding(resolved.type());
+                }
             }
         }
 
@@ -369,21 +509,13 @@ final class ImportNormalizer {
         }
 
         @Override
-        public Void visitClass(ClassTree tree, Void unused) {
-            recordTypeBinding(trees.getElement(getCurrentPath()));
-            return super.visitClass(tree, unused);
-        }
-
-        @Override
         public Void visitIdentifier(IdentifierTree tree, Void unused) {
             if (!inImport) {
-                Element element = trees.getElement(getCurrentPath());
-                recordTypeBinding(element);
-                for (WildcardImport wildcard : wildcards) {
-                    if (wildcard.contains(element)) {
-                        wildcard.usedNames().add(tree.getName()
-                                .toString());
-                    }
+                String name = tree.getName().toString();
+                if (isPotentialTypeReference(getCurrentPath())) {
+                    recordWildcardUse(name, isExpressionQualifier(getCurrentPath()), false);
+                } else {
+                    recordWildcardUse(name, false, true);
                 }
             }
             return super.visitIdentifier(tree, unused);
@@ -391,19 +523,19 @@ final class ImportNormalizer {
 
         @Override
         public Void visitMemberSelect(MemberSelectTree tree, Void unused) {
-            if (!inImport) {
-                Element element = trees.getElement(getCurrentPath());
-                if (element instanceof TypeElement type && isOutermostTypeSelection()) {
-                    String qualifiedName = type.getQualifiedName().toString();
-                    long start = trees.getSourcePositions().getStartPosition(unit, tree);
-                    long end = trees.getSourcePositions().getEndPosition(unit, tree);
-                    if (!qualifiedName.isEmpty()
-                            && canImport(type)
-                            && start >= 0
-                            && end >= start) {
+            TreePath parent = getCurrentPath().getParentPath();
+            if (!inImport && (parent == null || !(parent.getLeaf() instanceof MemberSelectTree))) {
+                ResolvedType resolved = resolver.longestType(tree, isPotentialTypeReference(getCurrentPath()));
+                if (resolved != null && resolved.componentCount() > 1 && canImport(resolved.type())) {
+                    Tree selection = resolved.selection();
+                    long start = trees.getSourcePositions().getStartPosition(unit, selection);
+                    long end = trees.getSourcePositions().getEndPosition(unit, selection);
+                    if (start >= 0 && end >= start) {
+                        TypeElement type = resolved.type();
                         String simpleName = type.getSimpleName().toString();
-                        qualifiedTypes.add(new QualifiedType(simpleName, qualifiedName, start, end, needsImport(type),
-                                isExpressionQualifier() && hasScopeConflict(simpleName, qualifiedName)));
+                        boolean expressionQualifier = resolved.componentCount() < resolved.totalComponents();
+                        qualifiedTypes.add(new QualifiedType(simpleName, type.getQualifiedName().toString(), start,
+                                end, needsImport(type), expressionQualifier && valueBindings.contains(simpleName)));
                     }
                 }
             }
@@ -439,7 +571,7 @@ final class ImportNormalizer {
                     new DocTreePathScanner<Void, Void>() {
                         @Override
                         public Void visitReference(ReferenceTree reference, Void unused) {
-                            recordDocReference(docTrees.getElement(getCurrentPath()), reference.getSignature());
+                            recordDocReference(reference.getSignature());
                             return super.visitReference(reference, unused);
                         }
                     }.scan(new DocTreePath(path, comment), null);
@@ -447,85 +579,92 @@ final class ImportNormalizer {
             }.scan(unit, null);
         }
 
-        private void recordDocReference(Element element, String signature) {
-            for (WildcardImport wildcard : wildcards) {
-                if (wildcard.isStatic()) {
-                    if (wildcard.contains(element) && isSimpleDocReference(signature, element.getSimpleName()
-                            .toString())) {
-                        wildcard.usedNames().add(element.getSimpleName()
-                                .toString());
-                    }
+        private void recordDocReference(String signature) {
+            int end = 0;
+            while (end < signature.length() && Character.isJavaIdentifierPart(signature.charAt(end))) {
+                end++;
+            }
+            if (end > 0) {
+                recordWildcardUse(signature.substring(0, end), false, false);
+            }
+        }
+
+        private void recordWildcardUse(String name, boolean expressionQualifier, boolean staticOnly) {
+            List<WildcardImport> matches = wildcards.stream()
+                    .filter(wildcard -> !staticOnly || wildcard.isStatic())
+                    .filter(wildcard -> wildcard.matches(name))
+                    .toList();
+            if (matches.size() > 1 || expressionQualifier && valueBindings.contains(name)) {
+                matches.forEach(WildcardImport::markRetained);
+                return;
+            }
+            for (WildcardImport wildcard : matches) {
+                if (wildcard.isStatic() && valueBindings.contains(name)) {
+                    wildcard.markRetained();
                     continue;
                 }
-                TypeElement topLevelType = topLevelType(element);
-                if (topLevelType != null && wildcard.contains(topLevelType) && isSimpleDocReference(signature, topLevelType.getSimpleName()
-                        .toString())) {
-                    wildcard.usedNames().add(topLevelType.getSimpleName()
-                            .toString());
+                wildcard.usedNames().add(name);
+                TypeElement type = wildcard.type(name);
+                if (type != null) {
+                    recordTypeBinding(type);
                 }
             }
         }
 
-        private static TypeElement topLevelType(Element element) {
-            TypeElement result = null;
-            for (Element current = element;
-                 current != null && !(current instanceof PackageElement);
-                 current = current.getEnclosingElement()) {
-                if (current instanceof TypeElement type) {
-                    result = type;
+        private static boolean isExpressionQualifier(TreePath path) {
+            TreePath parent = path.getParentPath();
+            return parent != null
+                    && (parent.getLeaf() instanceof MemberSelectTree select && select.getExpression() == path.getLeaf()
+                    || parent.getLeaf() instanceof MemberReferenceTree reference && reference.getQualifierExpression() == path.getLeaf());
+        }
+
+        private static boolean isPotentialTypeReference(TreePath path) {
+            Tree child = path.getLeaf();
+            TreePath parentPath = path.getParentPath();
+            while (parentPath != null) {
+                Tree parent = parentPath.getLeaf();
+                if (parent instanceof AnnotatedTypeTree annotated && annotated.getUnderlyingType() == child
+                        || parent instanceof ArrayTypeTree array && array.getType() == child
+                        || parent instanceof ParameterizedTypeTree parameterized
+                                && (parameterized.getType() == child || parameterized.getTypeArguments().contains(child))) {
+                    child = parent;
+                    parentPath = parentPath.getParentPath();
+                    continue;
                 }
-            }
-            return result;
-        }
-
-        private static boolean isSimpleDocReference(String signature, String name) {
-            if (!signature.startsWith(name)) {
-                return false;
-            }
-            if (signature.length() == name.length()) {
-                return true;
-            }
-            return switch (signature.charAt(name.length())) {
-                case '#', '.', '<', '[', '(' -> true;
-                default -> false;
-            };
-        }
-
-        private boolean isOutermostTypeSelection() {
-            TreePath parent = getCurrentPath().getParentPath();
-            return parent == null || !(parent.getLeaf() instanceof MemberSelectTree) || !(trees.getElement(parent) instanceof TypeElement);
-        }
-
-        private boolean isExpressionQualifier() {
-            TreePath parent = getCurrentPath().getParentPath();
-            return parent != null && parent.getLeaf() instanceof MemberSelectTree && !(trees.getElement(parent) instanceof TypeElement);
-        }
-
-        private boolean hasScopeConflict(String simpleName, String qualifiedName) {
-            for (Scope scope = trees.getScope(getCurrentPath());
-                 scope != null;
-                 scope = scope.getEnclosingScope()) {
-                for (Element element : scope.getLocalElements()) {
-                    if (!element.getSimpleName().contentEquals(simpleName)) {
-                        continue;
-                    }
-                    if (element instanceof TypeElement type && type.getQualifiedName().contentEquals(qualifiedName)) {
-                        continue;
-                    }
-                    if (element.getKind() != ElementKind.PACKAGE && element.getKind() != ElementKind.MODULE) {
-                        return true;
-                    }
-                }
+                return parent instanceof VariableTree variable && variable.getType() == child
+                        || parent instanceof MethodTree method
+                                && (method.getReturnType() == child || method.getThrows().contains(child))
+                        || parent instanceof ClassTree declaration
+                                && (declaration.getExtendsClause() == child
+                                        || declaration.getImplementsClause().contains(child)
+                                        || declaration.getPermitsClause().contains(child))
+                        || parent instanceof TypeParameterTree parameter && parameter.getBounds().contains(child)
+                        || parent instanceof TypeCastTree cast && cast.getType() == child
+                        || parent instanceof InstanceOfTree instanceOf && instanceOf.getType() == child
+                        || parent instanceof DeconstructionPatternTree pattern && pattern.getDeconstructor() == child
+                        || parent instanceof NewClassTree creation && creation.getIdentifier() == child
+                        || parent instanceof NewArrayTree creation && creation.getType() == child
+                        || parent instanceof AnnotationTree annotation && annotation.getAnnotationType() == child
+                        || parent instanceof WildcardTree wildcard && wildcard.getBound() == child
+                        || parent instanceof UnionTypeTree union && union.getTypeAlternatives().contains(child)
+                        || parent instanceof IntersectionTypeTree intersection && intersection.getBounds().contains(child)
+                        || parent instanceof MethodInvocationTree invocation && invocation.getTypeArguments().contains(child)
+                        || parent instanceof MemberReferenceTree reference
+                                && (reference.getQualifierExpression() == child || reference.getTypeArguments().contains(child))
+                        || parent instanceof MemberSelectTree select && select.getExpression() == child;
             }
             return false;
         }
 
         private static boolean canImport(TypeElement type) {
             Element current = type;
-            while (!(current.getEnclosingElement() instanceof PackageElement)) {
+            while (current.getEnclosingElement() != null
+                    && !(current.getEnclosingElement() instanceof PackageElement)) {
                 current = current.getEnclosingElement();
             }
-            PackageElement owner = (PackageElement) current.getEnclosingElement();
+            if (!(current.getEnclosingElement() instanceof PackageElement owner)) {
+                return false;
+            }
             return current == type || !owner.isUnnamed();
         }
 
@@ -539,30 +678,132 @@ final class ImportNormalizer {
             return !ownerName.equals(packageName) && !ownerName.equals("java.lang");
         }
 
-        private void recordTypeBinding(Element element) {
-            if (element instanceof TypeElement type) {
-                typeBindings.computeIfAbsent(type.getSimpleName().toString(),
-                        ignored -> new HashSet<>())
-                            .add(type.getQualifiedName()
-                                     .toString());
-            } else if (element != null && element.getKind() == ElementKind.TYPE_PARAMETER) {
-                typeBindings.computeIfAbsent(element.getSimpleName().toString(),
-                        ignored -> new HashSet<>())
-                            .add("<type parameter>");
-            }
+        private void recordTypeBinding(TypeElement type) {
+            typeBindings.computeIfAbsent(type.getSimpleName().toString(), ignored -> new HashSet<>())
+                    .add(type.getQualifiedName().toString());
         }
     }
 
-    private record WildcardImport(boolean isStatic, Element owner, Set<Element> members,
-            long start, long end, Set<String> usedNames) {
-        boolean contains(Element element) {
-            if (element == null) {
-                return false;
+    private static final class DeclarationScanner extends TreePathScanner<Void, Void> {
+        private final TypeResolver resolver;
+        private final Map<String, Set<String>> typeBindings;
+        private final Set<String> valueBindings;
+        private final Deque<String> enclosingTypes = new ArrayDeque<>();
+
+        DeclarationScanner(TypeResolver resolver, Map<String, Set<String>> typeBindings,
+                Set<String> valueBindings) {
+            this.resolver = resolver;
+            this.typeBindings = typeBindings;
+            this.valueBindings = valueBindings;
+        }
+
+        @Override
+        public Void visitClass(ClassTree tree, Void unused) {
+            String simpleName = tree.getSimpleName().toString();
+            if (simpleName.isEmpty()) {
+                return super.visitClass(tree, unused);
             }
+            enclosingTypes.addLast(simpleName);
+            String relativeName = String.join(".", enclosingTypes);
+            String qualifiedName = resolver.packageName.isEmpty()
+                    ? relativeName
+                    : resolver.packageName + "." + relativeName;
+            TypeElement type = resolver.elements.getTypeElement(qualifiedName);
+            typeBindings.computeIfAbsent(simpleName, ignored -> new HashSet<>())
+                    .add(type == null ? qualifiedName : type.getQualifiedName().toString());
+            try {
+                return super.visitClass(tree, unused);
+            } finally {
+                enclosingTypes.removeLast();
+            }
+        }
+
+        @Override
+        public Void visitTypeParameter(TypeParameterTree tree, Void unused) {
+            typeBindings.computeIfAbsent(tree.getName().toString(), ignored -> new HashSet<>())
+                    .add("<type parameter>");
+            return super.visitTypeParameter(tree, unused);
+        }
+
+        @Override
+        public Void visitVariable(VariableTree tree, Void unused) {
+            valueBindings.add(tree.getName().toString());
+            return super.visitVariable(tree, unused);
+        }
+
+        @Override
+        public Void visitMethod(MethodTree tree, Void unused) {
+            valueBindings.add(tree.getName().toString());
+            return super.visitMethod(tree, unused);
+        }
+    }
+
+    private static final class WildcardImport {
+        private final boolean isStatic;
+        private final Element owner;
+        private final Elements elements;
+        private final long start;
+        private final long end;
+        private final Set<String> staticMembers = new HashSet<>();
+        private final Map<String, TypeElement> types = new HashMap<>();
+        private final Set<String> usedNames = new LinkedHashSet<>();
+        private boolean retain;
+
+        WildcardImport(boolean isStatic, Element owner, Elements elements, long start, long end) {
+            this.isStatic = isStatic;
+            this.owner = owner;
+            this.elements = elements;
+            this.start = start;
+            this.end = end;
             if (isStatic) {
-                return element.getModifiers().contains(Modifier.STATIC) && members.contains(element);
+                for (Element member : elements.getAllMembers((TypeElement) owner)) {
+                    if (!member.getModifiers().contains(Modifier.STATIC)) {
+                        continue;
+                    }
+                    String name = member.getSimpleName().toString();
+                    staticMembers.add(name);
+                    if (member instanceof TypeElement type) {
+                        types.putIfAbsent(name, type);
+                    }
+                }
             }
-            return element instanceof TypeElement && element.getEnclosingElement().equals(owner);
+        }
+
+        boolean matches(String name) {
+            return isStatic ? staticMembers.contains(name) : type(name) != null;
+        }
+
+        TypeElement type(String name) {
+            if (types.containsKey(name)) {
+                return types.get(name);
+            }
+            TypeElement type = isStatic ? null : elements.getTypeElement(owner + "." + name);
+            types.put(name, type);
+            return type;
+        }
+
+        void markRetained() {
+            retain = true;
+        }
+
+        boolean retain() {
+            return retain;
+        }
+
+        boolean isStatic() {
+            return isStatic;
+        }
+
+        long start() {
+            return start;
+        }
+
+        long end() {
+            return end;
+        }
+
+        Set<String> usedNames() {
+            return usedNames;
         }
 
         String importName(String name) {
@@ -570,6 +811,9 @@ final class ImportNormalizer {
             return prefix + owner + "." + name + ";\n";
         }
     }
+
+    private record ResolvedType(TypeElement type, Tree selection, int componentCount,
+            int totalComponents) {}
 
     private record QualifiedType(String simpleName, String qualifiedName, long start,
             long end, boolean needsImport, boolean scopeConflict) {}

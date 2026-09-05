@@ -202,6 +202,28 @@ class JfmtToolTest {
     }
 
     @Test
+    void normalizesImportsWithoutAttributingMethodBodies() throws Exception {
+        Path source = write(temporaryDirectory.resolve("Example.java"), "import java.util.*;class Example{List<String> values;void broken(){missing();}}");
+
+        Invocation invocation = run("", source.toString());
+
+        assertEquals(0, invocation.exitCode(), invocation.error());
+        assertEquals(
+                """
+                import java.util.List;
+
+                class Example {
+                    List<String> values;
+
+                    void broken() {
+                        missing();
+                    }
+                }
+                """,
+                Files.readString(source));
+    }
+
+    @Test
     void failsWhenAnAttributableSourceContainsAnUnresolvedType() throws Exception {
         String input = "import java.util.*;class Example{Missing missing;java.time.Duration duration;List<String> values;}";
         Path source = write(temporaryDirectory.resolve("Example.java"), input);
@@ -286,6 +308,47 @@ class JfmtToolTest {
                 }
 
                 class Date {}
+                """,
+                Files.readString(source));
+    }
+
+    @Test
+    void retainsQualifiedReferencesThatConflictWithTypesInTheSamePackage() throws Exception {
+        Path conflict = write(temporaryDirectory.resolve("example/Date.java"), "package example;class Date{}");
+        Path source = write(temporaryDirectory.resolve("example/Example.java"), "package example;class Example{java.util.Date external;}");
+
+        Invocation invocation = run("", conflict.toString(), source.toString());
+
+        assertEquals(0, invocation.exitCode(), invocation.error());
+        assertEquals(
+                """
+                package example;
+
+                class Example {
+                    java.util.Date external;
+                }
+                """,
+                Files.readString(source));
+    }
+
+    @Test
+    void importsNestedTypesDeclaredInTheSameSource() throws Exception {
+        Path source = write(temporaryDirectory.resolve("example/Example.java"), "package example;class Example{static class Nested{}Example.Nested value;}");
+
+        Invocation invocation = run("", source.toString());
+
+        assertEquals(0, invocation.exitCode(), invocation.error());
+        assertEquals(
+                """
+                package example;
+
+                import example.Example.Nested;
+
+                class Example {
+                    static class Nested {}
+
+                    Nested value;
+                }
                 """,
                 Files.readString(source));
     }
