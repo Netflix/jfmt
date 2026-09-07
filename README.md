@@ -1,5 +1,8 @@
 # jfmt
 
+[![Maven Central](https://img.shields.io/maven-central/v/com.netflix/com.netflix.tools.jfmt)](https://central.sonatype.com/artifact/com.netflix/com.netflix.tools.jfmt)
+![JDK 25+](https://img.shields.io/badge/JDK-25%2B-blue)
+
 `jfmt` formats modern Java source consistently using the [Sun Code Conventions for the Java Programming Language](https://www.oracle.com/technetwork/java/codeconventions-150003.pdf) as its baseline. Where the language and common practice have evolved, it follows the conventions used in current OpenJDK source.
 
 Rather than imposing a fixed line width, `jfmt` combines Java structure with the visual distance between related peers. Horizontal distance is a continuous layout cost, not a maximum: identifier and literal length do not by themselves cause a line break, and indivisible code may remain long. Lists, expressions, and method chains become vertical when the reduction in scanning effort outweighs the fragmentation caused by additional lines.
@@ -15,7 +18,7 @@ The formatter is built on [google-java-format](https://github.com/google/google-
 ## Installation
 
 > [!IMPORTANT]
-> This project is currently in preview. We'd love to hear your feedback! Use Issues for bugs and Discussions for feedback and suggestions.
+> This tool is currently in preview. Please report problems in the [`ja` issue tracker](https://github.com/Netflix/ja/issues) and share feedback, questions, and suggestions in [Discussions](https://github.com/Netflix/ja/discussions).
 
 Follow the `ja` [Installation Guide](https://github.com/Netflix/ja#installation) to create a `ja`-enabled development JDK. It includes the `jfmt` command and uses it for `ja fmt`.
 
