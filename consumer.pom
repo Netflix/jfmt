@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <name>jfmt</name>
+  <description>A formatter for modern Java source based on the Sun code conventions and current OpenJDK style.</description>
+  <url>https://github.com/Netflix/jfmt</url>
+  <licenses>
+    <license>
+      <name>Apache License, Version 2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+  <developers>
+    <developer>
+      <id>DanielThomas</id>
+      <name>Danny Thomas</name>
+      <url>https://github.com/DanielThomas</url>
+      <organization>Netflix, Inc.</organization>
+      <organizationUrl>https://www.netflix.com</organizationUrl>
+    </developer>
+  </developers>
+  <scm>
+    <connection>scm:git:https://github.com/Netflix/jfmt.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/Netflix/jfmt.git</developerConnection>
+    <url>https://github.com/Netflix/jfmt</url>
+  </scm>
+</project>
