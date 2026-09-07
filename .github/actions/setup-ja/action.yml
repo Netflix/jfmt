@@ -49,7 +49,7 @@ runs:
 
     - name: Restore ja toolchain
       id: cache
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ${{ steps.configuration.outputs.java-home }}
         key: ${{ steps.configuration.outputs.cache-key }}
