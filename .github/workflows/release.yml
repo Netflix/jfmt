@@ -22,7 +22,8 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  release:
+    name: Release
     if: ${{ github.repository == 'Netflix/jfmt' }}
     environment: Publish
     runs-on: ubuntu-latest
