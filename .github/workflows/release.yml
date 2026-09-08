@@ -36,14 +36,33 @@ jobs:
           distribution: zulu
           java-version-file: .java-version
 
-      - name: Set up ja
-        uses: ./.github/actions/setup-ja
+      - name: Configure release
+        run: echo "BUILD_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
-      - name: Test
+      - name: Set up ja
+        uses: Netflix/ja/.github/actions/setup-ja@v0.17.7
+
+      - name: Test source with bootstrap ja
         run: ja test --all
 
-      - name: Publish to Maven Central
-        run: ja maven deploy-central --module-version "${GITHUB_REF_NAME#v}"
+      - name: Assemble jfmt distribution
+        run: >-
+          ja assemble --jmod --target-platform linux-x86_64
+          --module-version "$BUILD_VERSION" "$RUNNER_TEMP/artifacts"
+
+      - name: Link assembled jfmt development JDK
+        uses: Netflix/ja/.github/actions/link-assembled-tool@v0.17.7
+        with:
+          artifacts: ${{ runner.temp }}/artifacts
+          module: com.netflix.tools.jfmt
+
+      - name: Test source with built jfmt
+        run: |
+          test "$(command -v jfmt)" = "$JAVA_HOME/bin/jfmt"
+          ja test --all
+
+      - name: Publish to Maven Central with built jfmt
+        run: ja maven deploy-central --module-version "$BUILD_VERSION"
         env:
           MAVEN_CENTRAL_USERNAME: ${{ secrets.ORG_SONATYPE_USERNAME }}
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.ORG_SONATYPE_PASSWORD }}

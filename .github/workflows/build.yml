@@ -24,6 +24,8 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    env:
+      BUILD_VERSION: 0.7.1-build.${{ github.run_id }}
     steps:
       - uses: actions/checkout@v6
 
@@ -34,7 +36,23 @@ jobs:
           java-version-file: .java-version
 
       - name: Set up ja
-        uses: ./.github/actions/setup-ja
+        uses: Netflix/ja/.github/actions/setup-ja@v0.17.7
 
-      - name: Test
+      - name: Test source with bootstrap ja
         run: ja test --all
+
+      - name: Assemble jfmt distribution
+        run: >-
+          ja assemble --jmod --target-platform linux-x86_64
+          --module-version "$BUILD_VERSION" "$RUNNER_TEMP/artifacts"
+
+      - name: Link assembled jfmt development JDK
+        uses: Netflix/ja/.github/actions/link-assembled-tool@v0.17.7
+        with:
+          artifacts: ${{ runner.temp }}/artifacts
+          module: com.netflix.tools.jfmt
+
+      - name: Test source with built jfmt
+        run: |
+          test "$(command -v jfmt)" = "$JAVA_HOME/bin/jfmt"
+          ja test --all
