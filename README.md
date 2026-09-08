@@ -20,6 +20,9 @@ The formatter is built on [google-java-format](https://github.com/google/google-
 > [!IMPORTANT]
 > This tool is currently in preview. We are collecting all preview feedback in the [`ja` repository](https://github.com/Netflix/ja): use [Issues](https://github.com/Netflix/ja/issues) to report problems and [Discussions](https://github.com/Netflix/ja/discussions) for feedback, questions, and suggestions.
 
+> [!NOTE]
+> Netflix engineers should use the internally bundled toolchain rather than installing this tool separately.
+
 Follow the `ja` [Installation Guide](https://github.com/Netflix/ja#installation) to create a `ja`-enabled development JDK. It includes the `jfmt` command and uses it for `ja fmt`.
 
 For standalone use, `jar` and `jmod` artifacts for the tool are available on Maven Central.
