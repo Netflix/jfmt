@@ -65,6 +65,7 @@ final class JfmtCommandLine {
                     help)
             .operand("FILE", "Java source file, or - for standard input", Cardinality.ZERO_OR_MORE)
             .argumentFiles()
+            .version(Jfmt.class.getModule())
             .completion()
             .build();
 
@@ -76,6 +77,10 @@ final class JfmtCommandLine {
 
     int isSupportedOption(String option) {
         return "--aot-warmup".equals(option) ? 0 : commandLine.isSupportedOption(option);
+    }
+
+    OptionalInt runVersion(PrintWriter out, String... arguments) {
+        return commandLine.runVersion("jfmt", out, arguments);
     }
 
     OptionalInt runCompletion(PrintWriter out, PrintWriter err, String... arguments) {
