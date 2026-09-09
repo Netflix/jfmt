@@ -115,6 +115,21 @@ class JfmtToolTest {
     }
 
     @Test
+    void printsVersion() {
+        Invocation invocation = run("", "--version");
+        Tool tool = tool();
+        String version = tool.getClass()
+                .getModule()
+                .getDescriptor()
+                .rawVersion()
+                .orElse("dev");
+
+        assertEquals(0, invocation.exitCode(), invocation.error());
+        assertEquals("jfmt " + version + "\n", invocation.output());
+        assertEquals("", invocation.error());
+    }
+
+    @Test
     void normalizesImportsWhenSourcesAreAttributable() throws Exception {
         Path source = write(temporaryDirectory.resolve("Example.java"), "import java.util.*;import static java.util.Collections.*;class Example{java.time.Duration duration;List<String> values=emptyList();Map<String,String> index;}");
 
@@ -609,6 +624,7 @@ class JfmtToolTest {
         assertEquals(0, options.isSupportedOption("--enable-preview"));
         assertEquals(0, options.isSupportedOption("--check"));
         assertEquals(0, options.isSupportedOption("--help"));
+        assertEquals(0, options.isSupportedOption("--version"));
         assertEquals(0, options.isSupportedOption("__complete"));
         assertEquals(0, options.isSupportedOption("--aot-warmup"));
         assertEquals(-1, options.isSupportedOption("--preserve-author-breaks"));

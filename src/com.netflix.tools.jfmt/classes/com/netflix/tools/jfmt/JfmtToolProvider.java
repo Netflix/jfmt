@@ -74,6 +74,10 @@ public class JfmtToolProvider implements ToolProvider, OptionChecker {
 
     int run(InputStream in, PrintWriter out, PrintWriter err,
             String... args) {
+        var version = COMMAND_LINE.runVersion(out, args);
+        if (version.isPresent()) {
+            return version.orElseThrow();
+        }
         var completion = COMMAND_LINE.runCompletion(out, err, args);
         if (completion.isPresent()) {
             return completion.orElseThrow();

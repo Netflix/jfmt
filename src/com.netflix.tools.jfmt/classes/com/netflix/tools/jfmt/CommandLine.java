@@ -35,9 +35,6 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 import javax.tools.OptionChecker;
 
-import com.netflix.tools.jfmt.CommandLine.ParsedArguments.SelectedCommand;
-import com.netflix.tools.jfmt.CommandLine.ToolOption.Group;
-
 /**
  * An enumerable description of a command line with parsing, help, preparation,
  * and delegated completion support.
@@ -48,6 +45,7 @@ import com.netflix.tools.jfmt.CommandLine.ToolOption.Group;
 public final class CommandLine implements OptionChecker {
     private static final String COMPLETION_COMMAND = "__complete";
     private static final ToolOption COMPLETION = ToolOption.flag(COMPLETION_COMMAND, "");
+    private static final ToolOption VERSION = ToolOption.flag("--version", "Print version information");
 
     public enum Cardinality {
         ZERO_OR_ONE,
@@ -58,7 +56,7 @@ public final class CommandLine implements OptionChecker {
 
     private final String description;
     private final List<ToolOption> options;
-    private final List<Group> optionGroups;
+    private final List<ToolOption.Group> optionGroups;
     private final Map<String, ToolOption> optionsByName;
     private final List<Subcommand> commands;
     private final Map<String, Subcommand> commandsByName;
@@ -66,16 +64,18 @@ public final class CommandLine implements OptionChecker {
     private final boolean workingDirectory;
     private final boolean argumentFiles;
     private final boolean javaToolOptions;
+    private final Module versionModule;
 
     private CommandLine(
             String description,
             List<ToolOption> options,
-            List<Group> optionGroups,
+            List<ToolOption.Group> optionGroups,
             List<Subcommand> commands,
             Operand operand,
             boolean workingDirectory,
             boolean argumentFiles,
-            boolean javaToolOptions) {
+            boolean javaToolOptions,
+            Module versionModule) {
         this.description = description;
         this.options = List.copyOf(options);
         this.optionGroups = List.copyOf(optionGroups);
@@ -84,6 +84,7 @@ public final class CommandLine implements OptionChecker {
         this.workingDirectory = workingDirectory;
         this.argumentFiles = argumentFiles;
         this.javaToolOptions = javaToolOptions;
+        this.versionModule = versionModule;
         var byName = new LinkedHashMap<String, ToolOption>();
         for (ToolOption option : options) {
             for (String name : option.names()) {
@@ -119,7 +120,7 @@ public final class CommandLine implements OptionChecker {
         return options;
     }
 
-    public List<Group> optionGroups() {
+    public List<ToolOption.Group> optionGroups() {
         return optionGroups;
     }
 
@@ -197,7 +198,7 @@ public final class CommandLine implements OptionChecker {
         var values = new LinkedHashMap<ToolOption, List<String>>();
         var optionOccurrences = new ArrayList<ToolOption>();
         var operands = new ArrayList<String>();
-        SelectedCommand selectedCommand = null;
+        ParsedArguments.SelectedCommand selectedCommand = null;
         boolean optionsEnabled = true;
         for (int i = 0; i < arguments.size(); i++) {
             String argument = Objects.requireNonNull(arguments.get(i));
@@ -212,7 +213,7 @@ public final class CommandLine implements OptionChecker {
                         throw new IllegalArgumentException("Unknown command: " + argument);
                     }
                     var commandArguments = command.commandLine().parseArguments(arguments.subList(i + 1, arguments.size()));
-                    selectedCommand = new SelectedCommand(command.name(), commandArguments);
+                    selectedCommand = new ParsedArguments.SelectedCommand(command.name(), commandArguments);
                     break;
                 }
                 operands.add(argument);
@@ -387,6 +388,29 @@ public final class CommandLine implements OptionChecker {
         }
         completions.sort(Comparator.comparing(Completion::value));
         return List.copyOf(completions);
+    }
+
+    /**
+     * Handles {@code --version} when version reporting is enabled.
+     *
+     * @return zero after printing the version, or empty for an ordinary invocation
+     */
+    public OptionalInt runVersion(String invocationName, PrintWriter out, String... arguments) {
+        Objects.requireNonNull(invocationName);
+        Objects.requireNonNull(out);
+        Objects.requireNonNull(arguments);
+        if (versionModule == null) {
+            return OptionalInt.empty();
+        }
+        if (!Arrays.asList(arguments).equals(List.of("--version"))) {
+            return OptionalInt.empty();
+        }
+        String version = versionModule.getDescriptor() == null ? null : versionModule.getDescriptor()
+                .rawVersion()
+                .orElse(null);
+        out.println(invocationName + " " + (version == null ? "dev" : version));
+        out.flush();
+        return OptionalInt.of(0);
     }
 
     /**
@@ -1196,12 +1220,13 @@ public final class CommandLine implements OptionChecker {
     public static final class Builder {
         private String description = "";
         private final List<ToolOption> options = new ArrayList<>();
-        private final List<Group> optionGroups = new ArrayList<>();
+        private final List<ToolOption.Group> optionGroups = new ArrayList<>();
         private final List<Subcommand> commands = new ArrayList<>();
         private Operand operand;
         private boolean workingDirectory;
         private boolean argumentFiles;
         private boolean javaToolOptions;
+        private Module versionModule;
 
         private Builder() {}
 
@@ -1222,8 +1247,8 @@ public final class CommandLine implements OptionChecker {
             return this;
         }
 
-        public Builder options(Group... groups) {
-            for (Group group : groups) {
+        public Builder options(ToolOption.Group... groups) {
+            for (ToolOption.Group group : groups) {
                 var declared = Objects.requireNonNull(group);
                 optionGroups.add(declared);
                 options.addAll(declared.options());
@@ -1243,6 +1268,14 @@ public final class CommandLine implements OptionChecker {
                 throw new IllegalStateException("Completion is already enabled");
             }
             return option(COMPLETION);
+        }
+
+        public Builder version(Module module) {
+            if (versionModule != null) {
+                throw new IllegalStateException("Version reporting is already enabled");
+            }
+            versionModule = Objects.requireNonNull(module);
+            return option(VERSION);
         }
 
         public Builder argumentFiles() {
@@ -1288,7 +1321,7 @@ public final class CommandLine implements OptionChecker {
 
         public CommandLine build() {
             return new CommandLine(description, options, optionGroups, commands, operand, workingDirectory,
-                    argumentFiles, javaToolOptions);
+                    argumentFiles, javaToolOptions, versionModule);
         }
     }
 }
