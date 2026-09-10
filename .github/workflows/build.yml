@@ -36,7 +36,7 @@ jobs:
           java-version-file: .java-version
 
       - name: Set up ja
-        uses: Netflix/ja/.github/actions/setup-ja@v0.17.7
+        uses: Netflix/ja/.github/actions/setup-ja@v0.17.11
 
       - name: Test source with bootstrap ja
         run: ja test --all
@@ -47,7 +47,7 @@ jobs:
           --module-version "$BUILD_VERSION" "$RUNNER_TEMP/artifacts"
 
       - name: Link assembled jfmt development JDK
-        uses: Netflix/ja/.github/actions/link-assembled-tool@v0.17.7
+        uses: Netflix/ja/.github/actions/link-assembled-tool@v0.17.11
         with:
           artifacts: ${{ runner.temp }}/artifacts
           module: com.netflix.tools.jfmt
