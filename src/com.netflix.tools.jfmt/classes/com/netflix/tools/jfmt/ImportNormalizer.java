@@ -28,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.ServiceLoader;
 import java.util.Set;
 import javax.lang.model.element.Element;
 import javax.lang.model.element.Modifier;
@@ -41,7 +42,6 @@ import javax.tools.JavaCompiler;
 import javax.tools.JavaFileObject;
 import javax.tools.StandardJavaFileManager;
 import javax.tools.StandardLocation;
-import javax.tools.ToolProvider;
 
 import com.sun.source.doctree.DocCommentTree;
 import com.sun.source.doctree.ReferenceTree;
@@ -87,10 +87,9 @@ final class ImportNormalizer {
             return sources;
         }
 
-        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
-        if (compiler == null) {
-            throw new AttributionException("Java compiler is not available");
-        }
+        JavaCompiler compiler = ServiceLoader.load(ImportNormalizer.class.getModule().getLayer(), JavaCompiler.class)
+                .findFirst()
+                .orElseThrow(() -> new AttributionException("Java compiler is not available"));
 
         List<String> options = attributionOptions(compilerOptions);
         List<Path> descriptors = sources.keySet().stream()

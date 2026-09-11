@@ -29,6 +29,8 @@ module com.netflix.tools.jfmt {
     requires java.logging;
     requires jdk.compiler;
 
+    uses javax.tools.JavaCompiler;
+
     provides javax.tools.Tool with com.netflix.tools.jfmt.JfmtTool;
     provides java.util.spi.ToolProvider with com.netflix.tools.jfmt.JfmtToolProvider;
 }

@@ -16,12 +16,16 @@ package com.netflix.tools.jfmt.test;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.lang.module.ModuleFinder;
+import java.lang.module.ModuleReference;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.ServiceLoader;
 import java.util.ServiceLoader.Provider;
+import java.util.Set;
 import javax.tools.OptionChecker;
 import javax.tools.Tool;
 
@@ -151,6 +155,50 @@ class JfmtToolTest {
                 }
                 """,
                 Files.readString(source));
+    }
+
+    @Test
+    void runsWithJdkCompilerDefinedInTheSameChildLayer() throws Exception {
+        var parent = getClass().getModule().getLayer();
+        var jfmtReference = parent.configuration()
+                .findModule("com.netflix.tools.jfmt")
+                .orElseThrow()
+                .reference();
+        var compilerReference = parent.configuration()
+                .findModule("jdk.compiler")
+                .orElseThrow()
+                .reference();
+        var finder = finder(jfmtReference, compilerReference);
+        var configuration = parent.configuration()
+                .resolve(finder, ModuleFinder.of(), Set.of("com.netflix.tools.jfmt", "jdk.compiler"));
+        var controller = ModuleLayer.defineModulesWithOneLoader(configuration, List.of(parent),
+                ClassLoader.getSystemClassLoader());
+        var layer = controller.layer();
+        var jfmtModule = layer.findModule("com.netflix.tools.jfmt").orElseThrow();
+        var compilerModule = layer.findModule("jdk.compiler").orElseThrow();
+        for (var packageName : List.of(
+                "com.sun.tools.javac.api",
+                "com.sun.tools.javac.code",
+                "com.sun.tools.javac.file",
+                "com.sun.tools.javac.model",
+                "com.sun.tools.javac.parser",
+                "com.sun.tools.javac.tree",
+                "com.sun.tools.javac.util")) {
+            controller.addExports(compilerModule, packageName, jfmtModule);
+        }
+        var tool = ServiceLoader.load(layer, Tool.class).stream()
+                .filter(provider -> provider.type().getModule() == jfmtModule)
+                .findFirst()
+                .map(Provider::get)
+                .orElseThrow();
+        var source = write(temporaryDirectory.resolve("Layered.java"), "class Layered{int value;}");
+        var output = new ByteArrayOutputStream();
+        var error = new ByteArrayOutputStream();
+
+        var exitCode = tool.run(new ByteArrayInputStream(new byte[0]), output, error, source.toString());
+
+        assertEquals(0, exitCode, error.toString(UTF_8));
+        assertEquals("class Layered {\n    int value;\n}\n", Files.readString(source));
     }
 
     @Test
@@ -579,6 +627,23 @@ class JfmtToolTest {
         var error = new ByteArrayOutputStream();
         int exitCode = tool.run(new ByteArrayInputStream(input.getBytes(UTF_8)), output, error, arguments);
         return new Invocation(exitCode, output.toString(UTF_8), error.toString(UTF_8));
+    }
+
+    private static ModuleFinder finder(ModuleReference... references) {
+        var modules = Set.of(references);
+        return new ModuleFinder() {
+            @Override
+            public Optional<ModuleReference> find(String name) {
+                return modules.stream()
+                        .filter(reference -> reference.descriptor().name().equals(name))
+                        .findFirst();
+            }
+
+            @Override
+            public Set<ModuleReference> findAll() {
+                return modules;
+            }
+        };
     }
 
     private static Tool tool() {
