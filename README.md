@@ -15,7 +15,8 @@ Rather than imposing a fixed line width, `jfmt` combines Java structure with the
 
 The formatter is built on [google-java-format](https://github.com/google/google-java-format).
 
-This tool is currently in preview. We are collecting feedback for all of the tools together in [Discussions](https://github.com/Netflix/ja/discussions).
+> [!IMPORTANT]
+> This tool is currently in preview. We are collecting feedback for all of the tools together in [Discussions](https://github.com/Netflix/ja/discussions).
 
 ## Installation
 
