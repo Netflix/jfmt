@@ -34,7 +34,7 @@ jobs:
           java-version-file: .java-version
 
       - name: Set up ja
-        uses: Netflix/ja/.github/actions/setup-ja@v0.18.1
+        uses: Netflix/ja/.github/actions/setup-ja@v0.18.2
 
       - name: Test
         run: ja test --all
