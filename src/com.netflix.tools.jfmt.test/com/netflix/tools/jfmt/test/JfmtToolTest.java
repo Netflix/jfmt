@@ -194,8 +194,15 @@ class JfmtToolTest {
         var source = write(temporaryDirectory.resolve("Layered.java"), "class Layered{int value;}");
         var output = new ByteArrayOutputStream();
         var error = new ByteArrayOutputStream();
-
-        var exitCode = tool.run(new ByteArrayInputStream(new byte[0]), output, error, source.toString());
+        var thread = Thread.currentThread();
+        var contextClassLoader = thread.getContextClassLoader();
+        int exitCode;
+        try {
+            thread.setContextClassLoader(layer.findLoader("com.netflix.tools.jfmt"));
+            exitCode = tool.run(new ByteArrayInputStream(new byte[0]), output, error, source.toString());
+        } finally {
+            thread.setContextClassLoader(contextClassLoader);
+        }
 
         assertEquals(0, exitCode, error.toString(UTF_8));
         assertEquals("class Layered {\n    int value;\n}\n", Files.readString(source));

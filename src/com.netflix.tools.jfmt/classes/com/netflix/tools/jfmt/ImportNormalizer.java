@@ -87,7 +87,7 @@ final class ImportNormalizer {
             return sources;
         }
 
-        JavaCompiler compiler = ServiceLoader.load(ImportNormalizer.class.getModule().getLayer(), JavaCompiler.class)
+        JavaCompiler compiler = ServiceLoader.load(JavaCompiler.class)
                 .findFirst()
                 .orElseThrow(() -> new AttributionException("Java compiler is not available"));
 
