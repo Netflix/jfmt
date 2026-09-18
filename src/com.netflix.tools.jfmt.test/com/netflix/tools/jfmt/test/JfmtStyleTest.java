@@ -1564,7 +1564,7 @@ class JfmtStyleTest {
     }
 
     @Test
-    void breaksAnEnclosingListWhenSiblingExpressionsAreFarApart() {
+    void breaksEnclosingListAroundLongArguments() {
         String input = "class Example{void run(){assertEquals(List.of(\"--module-path\",\"/path with spaces\",\"--add-modules\",\"a,b\",\"#value\"),ArgumentFiles.parse(\"--module-path\\n\\\"/path with spaces\\\"\\n--add-modules\\na,b\\n\\\"#value\\\"\\n\"));}}";
         String expected =
                 """
@@ -1584,7 +1584,7 @@ class JfmtStyleTest {
     }
 
     @Test
-    void breaksAListWhoseSimpleMembersHaveExcessiveScanningDistance() {
+    void breaksLongListOfSimpleMembers() {
         String input = "class Example{private static final Set<String> COMPILE_OPTIONS=Set.of(\"add-exports\",\"enable-preview\",\"module-path\",\"module-source-path\",\"module-version\",\"module=list\",\"patch-module\",\"processor-module-path\",\"release\",\"upgrade-module-path\");private static final Set<String> SOURCE_OPTIONS=Set.of(\"add-exports\",\"enable-preview\",\"module=list\",\"module-path\",\"module-source-path\",\"release\");}";
         String expected =
                 """
@@ -1611,7 +1611,7 @@ class JfmtStyleTest {
     }
 
     @Test
-    void wrapsAnArrayWhoseLiteralMembersHaveLongScanningDistance() {
+    void wrapsArrayOfLongLiterals() {
         String input = "class Example{void run(){String[] options={\"--module-path=/some/path\",\"--add-modules=com.example.app\",\"--add-exports=java.base/java.lang=com.example\",\"--enable-preview\",\"--patch-module=com.example.app=classes\",\"--upgrade-module-path=/some/upgrade/path\"};}}";
         String expected =
                 """
