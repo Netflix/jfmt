@@ -315,8 +315,8 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
   private ExpressionTree variableInitializer;
   // An enclosing argument-list break takes precedence over breaks inside its arguments.
   private int brokenArgumentListDepth;
-  // A selected higher-level break suppresses optional wrapping in the expression it owns.
-  private int layoutOwnerDepth;
+  // A chain break suppresses optional width-based breaks in its base expression.
+  private int widthBreakSuppressionDepth;
 
   protected static final Indent.Const ZERO = Indent.Const.ZERO;
   protected final int indentMultiplier;
@@ -370,12 +370,11 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
   // implementation detail cannot dominate.
   private static final int MAX_UNBROKEN_COMPLEXITY = 6;
 
-  // Keeping peers on one row incurs horizontal scanning cost; breaking incurs fragmentation cost.
-  // This is deliberately not a column limit: distance contributes continuously, and a long final
-  // or solitary member adds no scanning cost. The corpus calibrates the cost of leaving a row.
-  private static final long ROW_FRAGMENTATION_COST = 150;
-  private static final long BROKEN_PEER_FRAGMENTATION_COST =
-      ROW_FRAGMENTATION_COST / (MAX_UNBROKEN_COMPLEXITY - 1);
+  // Source width can add list breaks, but does not impose a maximum line length. The final or only
+  // member does not affect the score because there is no following member to separate from it.
+  private static final long ROW_BREAK_SCORE = 150;
+  private static final long BROKEN_MEMBER_WEIGHT =
+      ROW_BREAK_SCORE / (MAX_UNBROKEN_COMPLEXITY - 1);
 
   private enum ListLayout {
     FLAT,
@@ -728,31 +727,31 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     return builder.actualSize(startPosition, endPosition - startPosition);
   }
 
-  private static int attention(Tree member) {
-    // A method reference is scanned as one named value even though it denotes an invocation.
+  private static int memberLayoutWeight(Tree member) {
+    // Treat a method reference as one member rather than counting its invocation syntax.
     return member instanceof MemberReferenceTree ? 1 : memberComplexity(member);
   }
 
-  private long rowScanCost(List<? extends Tree> members, int fromIndex, int toIndex) {
-    long cost = 0;
+  private long rowWidthScore(List<? extends Tree> members, int fromIndex, int toIndex) {
+    long score = 0;
     int column = 0;
     for (int i = fromIndex; i < toIndex; i++) {
       if (i > fromIndex) {
         column += 2;
-        cost += (long) attention(members.get(i)) * column;
+        score += (long) memberLayoutWeight(members.get(i)) * column;
       }
       column += sourceWidth(members.get(i));
     }
-    return cost;
+    return score;
   }
 
-  private long flatScanCost(List<? extends Tree> members) {
-    return rowScanCost(members, 0, members.size());
+  private long flatWidthScore(List<? extends Tree> members) {
+    return rowWidthScore(members, 0, members.size());
   }
 
-  private long wrappedScanCost(List<? extends Tree> members, int breakIndex) {
-    return rowScanCost(members, 0, breakIndex)
-        + rowScanCost(members, breakIndex, members.size());
+  private long wrappedWidthScore(List<? extends Tree> members, int breakIndex) {
+    return rowWidthScore(members, 0, breakIndex)
+        + rowWidthScore(members, breakIndex, members.size());
   }
 
   private int preferredWrappedBreakIndex(List<? extends Tree> members) {
@@ -762,42 +761,42 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
   private int preferredWrappedBreakIndex(
       List<? extends Tree> members, int structuralBreakIndex) {
     if (structuralBreakIndex > 0
-        && members.stream().anyMatch(JavaInputAstVisitor::requiresOwnLayout)) {
+        && members.stream().anyMatch(JavaInputAstVisitor::requiresIndependentLayout)) {
       return structuralBreakIndex;
     }
     int bestIndex = structuralBreakIndex > 0 ? structuralBreakIndex : 1;
-    long bestCost =
+    long lowestScore =
         structuralBreakIndex > 0
-            ? wrappedScanCost(members, structuralBreakIndex)
+            ? wrappedWidthScore(members, structuralBreakIndex)
             : Long.MAX_VALUE;
     for (int i = 1; i < members.size(); i++) {
-      long cost = wrappedScanCost(members, i);
+      long score = wrappedWidthScore(members, i);
       if (structuralBreakIndex > 0 && i != structuralBreakIndex) {
-        cost += ROW_FRAGMENTATION_COST;
+        score += ROW_BREAK_SCORE;
       }
-      if (cost < bestCost) {
-        bestCost = cost;
+      if (score < lowestScore) {
+        lowestScore = score;
         bestIndex = i;
       }
     }
     return bestIndex;
   }
 
-  private long wrappedLayoutCost(List<? extends Tree> members) {
-    return ROW_FRAGMENTATION_COST
-        + wrappedScanCost(members, preferredWrappedBreakIndex(members));
+  private long wrappedLayoutScore(List<? extends Tree> members) {
+    return ROW_BREAK_SCORE
+        + wrappedWidthScore(members, preferredWrappedBreakIndex(members));
   }
 
-  private static long brokenLayoutCost(List<? extends Tree> members) {
-    long cost = ROW_FRAGMENTATION_COST;
+  private static long brokenLayoutScore(List<? extends Tree> members) {
+    long score = ROW_BREAK_SCORE;
     for (int i = 1; i < members.size(); i++) {
-      long attention = attention(members.get(i));
-      cost += BROKEN_PEER_FRAGMENTATION_COST * attention * attention;
+      long memberWeight = memberLayoutWeight(members.get(i));
+      score += BROKEN_MEMBER_WEIGHT * memberWeight * memberWeight;
     }
-    return cost;
+    return score;
   }
 
-  private static boolean requiresOwnLayout(Tree member) {
+  private static boolean requiresIndependentLayout(Tree member) {
     return switch (member) {
       case LambdaExpressionTree lambda -> lambda.getBody() instanceof BlockTree;
       case NewClassTree creation -> creation.getClassBody() != null;
@@ -806,11 +805,12 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     };
   }
 
-  private ListLayout perceptualListLayout(
+  private ListLayout widthAwareListLayout(
       List<? extends Tree> members, ListLayout structuralLayout) {
-    if (layoutOwnerDepth > 0) {
-      boolean requiresOwnLayout = members.stream().anyMatch(JavaInputAstVisitor::requiresOwnLayout);
-      return structuralLayout == ListLayout.BROKEN || requiresOwnLayout
+    if (widthBreakSuppressionDepth > 0) {
+      boolean requiresIndependentLayout =
+          members.stream().anyMatch(JavaInputAstVisitor::requiresIndependentLayout);
+      return structuralLayout == ListLayout.BROKEN || requiresIndependentLayout
           ? structuralLayout
           : ListLayout.FLAT;
     }
@@ -819,15 +819,15 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     }
     return switch (structuralLayout) {
       case FLAT -> {
-        if (wrappedLayoutCost(members) >= flatScanCost(members)) {
+        if (wrappedLayoutScore(members) >= flatWidthScore(members)) {
           yield ListLayout.FLAT;
         }
-        // Once two substantial peers need separation, align both rather than leaving the first one
-        // attached to the invocation and the second on a continuation line.
+        // With two members, put both on continuation lines instead of leaving the first attached
+        // to the invocation.
         yield members.size() == 2 ? ListLayout.BROKEN : ListLayout.WRAPPED;
       }
       case WRAPPED ->
-          brokenLayoutCost(members) < wrappedLayoutCost(members)
+          brokenLayoutScore(members) < wrappedLayoutScore(members)
               ? ListLayout.BROKEN
               : ListLayout.WRAPPED;
       case BROKEN -> ListLayout.BROKEN;
@@ -893,7 +893,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     boolean containsNestedBlock =
         arguments.stream().anyMatch(JavaInputAstVisitor::containsNestedBlock);
     ListLayout layout =
-        perceptualListLayout(arguments, structuralArgumentListLayout(arguments));
+        widthAwareListLayout(arguments, structuralArgumentListLayout(arguments));
     if (containsNestedBlock) {
       return layout == ListLayout.FLAT ? ListLayout.FLAT : ListLayout.WRAPPED;
     }
@@ -963,7 +963,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
       return ListLayout.FLAT;
     }
     ListLayout layout =
-        perceptualListLayout(expressions, structuralArrayInitializerLayout(expressions));
+        widthAwareListLayout(expressions, structuralArrayInitializerLayout(expressions));
     for (ExpressionTree expression : expressions) {
       if (expressionLayout(expression) == ListLayout.BROKEN) {
         return ListLayout.BROKEN;
@@ -1289,9 +1289,9 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
       boolean shortItems = hasOnlyShortItems(expressions);
       boolean allowFilledElementsOnOwnLine = shortItems || !inMemberValuePair;
       ListLayout structuralLayout = structuralArrayInitializerLayout(expressions);
-      ListLayout perceptualLayout = perceptualListLayout(expressions, structuralLayout);
-      int perceptualBreakIndex =
-          perceptualLayout == ListLayout.WRAPPED
+      ListLayout layout = widthAwareListLayout(expressions, structuralLayout);
+      int widthBreakIndex =
+          layout == ListLayout.WRAPPED
               ? preferredWrappedBreakIndex(
                   expressions, arrayInitializerStructuralBreakIndex(expressions))
               : -1;
@@ -1299,9 +1299,9 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
       for (ExpressionTree expression : expressions) {
         initializerComplexity += memberComplexity(expression);
       }
-      boolean breakStructurally =
+      boolean breakInitializer =
           initializerComplexity > MAX_UNBROKEN_COMPLEXITY
-              || perceptualLayout != ListLayout.FLAT;
+              || layout != ListLayout.FLAT;
 
       builder.open(plusTwo);
       tokenBreakTrailingComment("{", plusTwo);
@@ -1318,7 +1318,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         int complexity = memberComplexity(expression);
         if (afterFirstToken) {
           token(",");
-          if (i == perceptualBreakIndex || complexity > remainingComplexity) {
+          if (i == widthBreakIndex || complexity > remainingComplexity) {
             builder.forcedBreak(plusFour);
             remainingComplexity = MAX_UNBROKEN_COMPLEXITY;
           } else {
@@ -1333,7 +1333,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
       if (allowFilledElementsOnOwnLine) {
         builder.close();
       }
-      if (!breakStructurally) {
+      if (!breakInitializer) {
         builder.breakOp(minusTwo);
       }
       builder.close();
@@ -4067,9 +4067,9 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
     }
     boolean forceSelectorBreaks = 1 + 2 * invocationCount > MAX_UNBROKEN_COMPLEXITY;
     if (node != null && !items.isEmpty()) {
-      long keepSelectorCost =
-          (long) attention(items.get(0)) * (sourceWidth(getArrayBase(node)) + 2);
-      forceSelectorBreaks |= keepSelectorCost > ROW_FRAGMENTATION_COST;
+      long selectorWidthScore =
+          (long) memberLayoutWeight(items.get(0)) * (sourceWidth(getArrayBase(node)) + 2);
+      forceSelectorBreaks |= selectorWidthScore > ROW_BREAK_SCORE;
     }
 
     boolean needDot = false;
@@ -4092,13 +4092,13 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         token(".");
       } else {
         if (forceSelectorBreaks) {
-          layoutOwnerDepth++;
+          widthBreakSuppressionDepth++;
         }
         try {
           scan(getArrayBase(node), null);
         } finally {
           if (forceSelectorBreaks) {
-            layoutOwnerDepth--;
+            widthBreakSuppressionDepth--;
           }
         }
         builder.open(plusFour);
@@ -4586,7 +4586,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
 
   private void argList(List<? extends ExpressionTree> arguments, Indent plusIndent) {
     ListLayout layout = argumentListLayout(arguments);
-    int perceptualBreakIndex =
+    int widthBreakIndex =
         layout == ListLayout.WRAPPED
             ? preferredWrappedBreakIndex(
                 arguments, argumentListStructuralBreakIndex(arguments))
@@ -4606,7 +4606,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
             plusIndent,
             layout == ListLayout.FLAT ? Integer.MAX_VALUE : MAX_UNBROKEN_COMPLEXITY,
             new ArrayList<>(),
-            perceptualBreakIndex);
+            widthBreakIndex);
       }
     } finally {
       if (breaksStructurally) {
@@ -4643,7 +4643,7 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
       Indent plusIndent,
       int remainingComplexity,
       List<BreakTag> previousBreaks,
-      int perceptualBreakIndex) {
+      int widthBreakIndex) {
     boolean afterFirstToken = false;
     boolean continuationOpen = false;
     for (int i = 0; i < arguments.size(); i++) {
@@ -4651,17 +4651,17 @@ public class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
       int complexity = argumentListMemberComplexity(argument);
       BreakTag currentArgumentBreak = argumentBreak;
       if (afterFirstToken) {
-        boolean structurallyBroken =
-            i == perceptualBreakIndex
+        boolean breakBeforeArgument =
+            i == widthBreakIndex
                 || containsNestedBlock(argument)
-                || (perceptualBreakIndex < 0 && complexity > remainingComplexity);
-        if (structurallyBroken && continuationOpen) {
+                || (widthBreakIndex < 0 && complexity > remainingComplexity);
+        if (breakBeforeArgument && continuationOpen) {
           builder.close();
           continuationOpen = false;
         }
         token(",");
         currentArgumentBreak = genSym();
-        if (structurallyBroken) {
+        if (breakBeforeArgument) {
           builder.open(preservePreviousIndent(previousBreaks, plusFour));
           continuationOpen = true;
           builder.breakOp(
