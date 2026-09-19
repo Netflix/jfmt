@@ -101,6 +101,36 @@ class JfmtToolTest {
     }
 
     @Test
+    void formatsMultipleFilesIdempotently() throws Exception {
+        var files = new String[64];
+        for (int i = 0; i < files.length; i++) {
+            Path source = write(
+                    temporaryDirectory.resolve("Example" + i + ".java"),
+                    """
+                    class Example%d {
+                        int run(String operation) {
+                            return switch (operation) {
+                                case "install", "deploy", "deploy-central" -> new MavenDeploymentCommand(tools, definitions, javadocOptions)
+                                        .run(commandLine, moduleSourcePath, in, out, err);
+                                default -> 0;
+                            };
+                        }
+                    }
+                    """.formatted(i));
+            files[i] = source.toString();
+        }
+
+        Invocation formatted = run("", files);
+        var checkArguments = new String[files.length + 1];
+        checkArguments[0] = "--check";
+        System.arraycopy(files, 0, checkArguments, 1, files.length);
+        Invocation checked = run("", checkArguments);
+
+        assertEquals(0, formatted.exitCode(), formatted.error());
+        assertEquals(0, checked.exitCode(), checked.error());
+    }
+
+    @Test
     void acceptsOptionsAfterFileOperands() throws Exception {
         Path source = write(temporaryDirectory.resolve("Example.java"), "class Example{int value;}");
 

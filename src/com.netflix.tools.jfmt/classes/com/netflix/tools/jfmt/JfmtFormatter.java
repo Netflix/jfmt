@@ -41,7 +41,83 @@ public final class JfmtFormatter {
      * Format a Java source file, reorder imports, and remove unused imports.
      */
     public String formatSource(String input) throws FormatterException {
-        return formatter.formatSourceAndFixImports(input);
+        String formatted = separateAdjacentBlockComments(formatter.formatSourceAndFixImports(input));
+        for (int pass = 0; pass < 8; pass++) {
+            String next = separateAdjacentBlockComments(formatter.formatSource(formatted));
+            if (next.equals(formatted)) {
+                return formatted;
+            }
+            formatted = next;
+        }
+        throw new FormatterException("Formatting did not converge");
+    }
+
+    private static String separateAdjacentBlockComments(String input) {
+        var output = new StringBuilder(input.length());
+        String lineSeparator = input.contains("\r\n") ? "\r\n" : "\n";
+        var state = LexicalState.NORMAL;
+        for (int i = 0; i < input.length();) {
+            if (state == LexicalState.NORMAL && input.startsWith("\"\"\"", i)) {
+                output.append("\"\"\"");
+                i += 3;
+                state = LexicalState.TEXT_BLOCK;
+            } else if (state == LexicalState.NORMAL && input.startsWith("//", i)) {
+                output.append("//");
+                i += 2;
+                state = LexicalState.LINE_COMMENT;
+            } else if (state == LexicalState.NORMAL && input.startsWith("/*", i)) {
+                output.append("/*");
+                i += 2;
+                state = LexicalState.BLOCK_COMMENT;
+            } else if (state == LexicalState.NORMAL && input.charAt(i) == '"') {
+                output.append('"');
+                i++;
+                state = LexicalState.STRING;
+            } else if (state == LexicalState.NORMAL && input.charAt(i) == '\'') {
+                output.append('\'');
+                i++;
+                state = LexicalState.CHARACTER;
+            } else if ((state == LexicalState.STRING || state == LexicalState.CHARACTER || state == LexicalState.TEXT_BLOCK)
+                    && input.charAt(i) == '\\'
+                    && i + 1 < input.length()) {
+                output.append(input, i, i + 2);
+                i += 2;
+            } else if (state == LexicalState.STRING && input.charAt(i) == '"') {
+                output.append('"');
+                i++;
+                state = LexicalState.NORMAL;
+            } else if (state == LexicalState.CHARACTER && input.charAt(i) == '\'') {
+                output.append('\'');
+                i++;
+                state = LexicalState.NORMAL;
+            } else if (state == LexicalState.TEXT_BLOCK && input.startsWith("\"\"\"", i)) {
+                output.append("\"\"\"");
+                i += 3;
+                state = LexicalState.NORMAL;
+            } else if (state == LexicalState.LINE_COMMENT && (input.charAt(i) == '\n' || input.charAt(i) == '\r')) {
+                output.append(input.charAt(i++));
+                state = LexicalState.NORMAL;
+            } else if (state == LexicalState.BLOCK_COMMENT && input.startsWith("*/", i)) {
+                output.append("*/");
+                i += 2;
+                state = LexicalState.NORMAL;
+                if (input.startsWith("/*", i)) {
+                    output.append(lineSeparator);
+                }
+            } else {
+                output.append(input.charAt(i++));
+            }
+        }
+        return output.toString();
+    }
+
+    private enum LexicalState {
+        NORMAL,
+        STRING,
+        CHARACTER,
+        TEXT_BLOCK,
+        LINE_COMMENT,
+        BLOCK_COMMENT
     }
 
     /** Format specified character ranges of a Java source file. */
