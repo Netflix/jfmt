@@ -469,7 +469,7 @@ final class ImportNormalizer {
         private final List<WildcardImport> wildcards;
         private final Map<String, Set<String>> typeBindings = new HashMap<>();
         private final Set<String> valueBindings = new HashSet<>();
-        private final List<QualifiedType> qualifiedTypes = new ArrayList<>();
+        private final Set<QualifiedType> qualifiedTypes = new LinkedHashSet<>();
         private boolean inImport;
 
         UsageScanner(CompilationUnitTree unit, Trees trees, TypeResolver resolver,
