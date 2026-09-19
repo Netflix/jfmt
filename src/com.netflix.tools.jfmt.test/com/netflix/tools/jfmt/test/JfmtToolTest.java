@@ -199,6 +199,40 @@ class JfmtToolTest {
     }
 
     @Test
+    void doesNotImportNestedTypesFromTheSameTopLevelClass() throws Exception {
+        Path source = write(
+                temporaryDirectory.resolve("Example.java"),
+                """
+                package example;
+
+                class Example {
+                    Container.Nested value;
+
+                    static class Container {
+                        static class Nested {}
+                    }
+                }
+                """);
+
+        Invocation invocation = run("", source.toString());
+
+        assertEquals(0, invocation.exitCode(), invocation.error());
+        assertEquals(
+                """
+                package example;
+
+                class Example {
+                    Container.Nested value;
+
+                    static class Container {
+                        static class Nested {}
+                    }
+                }
+                """,
+                Files.readString(source));
+    }
+
+    @Test
     void normalizesQualifiedRecordComponentWithCompactConstructor() throws Exception {
         Path source = write(temporaryDirectory.resolve("Example.java"), "record Example(java.util.Optional<String> value){Example{if(value.isEmpty())throw new IllegalArgumentException();}}");
 
@@ -465,7 +499,7 @@ class JfmtToolTest {
     }
 
     @Test
-    void importsNestedTypesDeclaredInTheSameSource() throws Exception {
+    void retainsNestedTypesDeclaredInTheSameSource() throws Exception {
         Path source = write(temporaryDirectory.resolve("example/Example.java"), "package example;class Example{static class Nested{}Example.Nested value;}");
 
         Invocation invocation = run("", source.toString());
@@ -475,12 +509,10 @@ class JfmtToolTest {
                 """
                 package example;
 
-                import example.Example.Nested;
-
                 class Example {
                     static class Nested {}
 
-                    Nested value;
+                    Example.Nested value;
                 }
                 """,
                 Files.readString(source));
