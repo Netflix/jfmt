@@ -1,0 +1,79 @@
+#!/bin/sh
+set -eu
+
+GOOGLE_JAVA_FORMAT_VERSION=1.36.1
+COMMONMARK_VERSION=0.28.0
+JSPECIFY_VERSION=1.0.1
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+internal="$root/src/com.netflix.tools.jfmt/classes/com/netflix/tools/jfmt/internal"
+formatter="$internal/com/google/googlejavaformat"
+commonmark="$internal/org/commonmark"
+temporary=$(mktemp -d "${TMPDIR:-/tmp}/jfmt-vendor.XXXXXX")
+trap 'rm -rf "$temporary"' EXIT HUP INT TERM
+
+download() {
+    curl --fail --silent --show-error --location "$1" --output "$2"
+}
+
+extract() {
+    archive=$1
+    directory=$2
+    mkdir -p "$directory"
+    (cd "$directory" && jar xf "$archive")
+}
+
+download \
+    "https://github.com/google/google-java-format/releases/download/v${GOOGLE_JAVA_FORMAT_VERSION}/google-java-format-${GOOGLE_JAVA_FORMAT_VERSION}-sources.jar" \
+    "$temporary/google-java-format-sources.jar"
+download \
+    "https://repo.maven.apache.org/maven2/org/commonmark/commonmark/${COMMONMARK_VERSION}/commonmark-${COMMONMARK_VERSION}-sources.jar" \
+    "$temporary/commonmark-sources.jar"
+download \
+    "https://repo.maven.apache.org/maven2/org/commonmark/commonmark-ext-gfm-tables/${COMMONMARK_VERSION}/commonmark-ext-gfm-tables-${COMMONMARK_VERSION}-sources.jar" \
+    "$temporary/commonmark-tables-sources.jar"
+download \
+    "https://repo.maven.apache.org/maven2/org/jspecify/jspecify/${JSPECIFY_VERSION}/jspecify-${JSPECIFY_VERSION}-sources.jar" \
+    "$temporary/jspecify-sources.jar"
+
+extract "$temporary/google-java-format-sources.jar" "$temporary/google-java-format"
+extract "$temporary/commonmark-sources.jar" "$temporary/commonmark"
+extract "$temporary/commonmark-tables-sources.jar" "$temporary/commonmark-tables"
+extract "$temporary/jspecify-sources.jar" "$temporary/jspecify"
+
+rm -rf "$formatter" "$commonmark"
+mkdir -p "$formatter" "$commonmark"
+while IFS= read -r source; do
+    mkdir -p "$formatter/$(dirname -- "$source")"
+    cp "$temporary/google-java-format/com/google/googlejavaformat/$source" "$formatter/$source"
+done < "$root/vendor/google-java-format.sources"
+cp -R "$temporary/commonmark/org/commonmark/." "$commonmark/"
+cp -R "$temporary/commonmark-tables/org/commonmark/." "$commonmark/"
+cp "$temporary/jspecify/org/jspecify/annotations/Nullable.java" \
+    "$internal/org/jspecify/annotations/Nullable.java"
+
+python3 - "$formatter" "$commonmark" "$internal/org/jspecify/annotations/Nullable.java" <<'PY'
+from pathlib import Path
+import sys
+
+replacements = {
+    "com.google.": "com.netflix.tools.jfmt.internal.com.google.",
+    "javax.annotation.": "com.netflix.tools.jfmt.internal.javax.annotation.",
+    "org.checkerframework.": "com.netflix.tools.jfmt.internal.org.checkerframework.",
+    "org.commonmark.": "com.netflix.tools.jfmt.internal.org.commonmark.",
+    "org.jspecify.": "com.netflix.tools.jfmt.internal.org.jspecify.",
+}
+paths = [path for root in map(Path, sys.argv[1:3]) for path in root.rglob("*.java")]
+paths.append(Path(sys.argv[3]))
+for path in paths:
+    source = path.read_text()
+    for original, relocated in replacements.items():
+        source = source.replace(original, relocated)
+    source = source.replace(
+        "package org.commonmark;", "package com.netflix.tools.jfmt.internal.org.commonmark;")
+    path.write_text(source)
+PY
+
+relative_formatter=${formatter#"$root"/}
+git -C "$root" apply --directory="$relative_formatter" \
+    "$root/vendor/google-java-format.patch"

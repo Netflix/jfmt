@@ -14,14 +14,49 @@
 
 package com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc;
 
+import static com.netflix.tools.jfmt.internal.com.google.common.base.Preconditions.checkState;
 import static com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.JavadocLexer.lex;
-import static com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.Type.BR_TAG;
-import static com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.Type.PARAGRAPH_OPEN_TAG;
 import static java.util.regex.Pattern.CASE_INSENSITIVE;
 import static java.util.regex.Pattern.compile;
+import static java.util.stream.Collectors.joining;
 
+import com.netflix.tools.jfmt.internal.com.google.common.base.CharMatcher;
 import com.netflix.tools.jfmt.internal.com.google.common.collect.ImmutableList;
 import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.JavadocLexer.LexException;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.BeginJavadoc;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.BlockQuoteCloseTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.BlockQuoteOpenTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.BrTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.CodeCloseTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.CodeOpenTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.EndJavadoc;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.FooterJavadocTagStart;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.ForcedNewline;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.HeaderCloseTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.HeaderOpenTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.HtmlComment;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.ListCloseTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.ListItemCloseTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.ListItemOpenTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.ListOpenTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.Literal;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.MarkdownCodeSpanEnd;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.MarkdownCodeSpanStart;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.MarkdownFencedCodeBlock;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.MarkdownHardLineBreak;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.MarkdownTable;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.MoeBeginStripComment;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.MoeEndStripComment;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.OptionalLineBreak;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.ParagraphCloseTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.ParagraphOpenTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.PreCloseTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.PreOpenTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.SnippetBegin;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.SnippetEnd;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.TableCloseTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.TableOpenTag;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc.Token.Whitespace;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -39,57 +74,79 @@ public final class JavadocFormatter {
   private static final int DEFAULT_LINE_LENGTH = 100;
 
   /**
-   * Formats the given Javadoc comment, which must start with ∕✱✱ and end with ✱∕. The output will
-   * start and end with the same characters.
+   * Formats the given Javadoc comment. A classic Javadoc comment must start with ∕✱✱ and end with
+   * ✱∕, and the output will start and end with the same characters. A Markdown Javadoc comment
+   * consists of lines each of which starts with ///, and the output will also consist of such
+   * lines.
    */
   public static String formatJavadoc(String input, int blockIndent) {
     return formatJavadoc(input, blockIndent, DEFAULT_LINE_LENGTH);
   }
 
   public static String formatJavadoc(String input, int blockIndent, int lineLength) {
+    boolean classicJavadoc =
+        switch (input) {
+          case String s when s.startsWith("/**") -> true;
+          case String s when s.startsWith("///") -> false;
+          default ->
+              throw new IllegalArgumentException("Input does not start with /** or ///: " + input);
+        };
+    String inputForLexer = classicJavadoc ? input : ("///" + markdownCommentText(input));
     ImmutableList<Token> tokens;
     try {
-      tokens = lex(input);
+      tokens = lex(inputForLexer, classicJavadoc);
     } catch (LexException e) {
       return input;
     }
-    String result = render(tokens, blockIndent, lineLength);
-    return makeSingleLineIfPossible(blockIndent, lineLength, result);
+    String result = render(tokens, blockIndent, classicJavadoc, lineLength);
+    if (classicJavadoc) {
+      result = makeSingleLineIfPossible(blockIndent, lineLength, result);
+    }
+    return result;
   }
 
-  private static String render(List<Token> input, int blockIndent, int lineLength) {
-    JavadocWriter output = new JavadocWriter(blockIndent, lineLength);
+  private static String render(
+      List<Token> input, int blockIndent, boolean classicJavadoc, int lineLength) {
+    JavadocWriter output = new JavadocWriter(blockIndent, classicJavadoc, lineLength);
     for (Token token : input) {
-      switch (token.getType()) {
-        case BEGIN_JAVADOC -> output.writeBeginJavadoc();
-        case END_JAVADOC -> {
+      switch (token) {
+        case BeginJavadoc unused -> output.writeBeginJavadoc();
+        case EndJavadoc unused -> {
           output.writeEndJavadoc();
           return output.toString();
         }
-        case FOOTER_JAVADOC_TAG_START -> output.writeFooterJavadocTagStart(token);
-        case SNIPPET_BEGIN -> output.writeSnippetBegin(token);
-        case SNIPPET_END -> output.writeSnippetEnd(token);
-        case LIST_OPEN_TAG -> output.writeListOpen(token);
-        case LIST_CLOSE_TAG -> output.writeListClose(token);
-        case LIST_ITEM_OPEN_TAG -> output.writeListItemOpen(token);
-        case HEADER_OPEN_TAG -> output.writeHeaderOpen(token);
-        case HEADER_CLOSE_TAG -> output.writeHeaderClose(token);
-        case PARAGRAPH_OPEN_TAG -> output.writeParagraphOpen(standardizePToken(token));
-        case BLOCKQUOTE_OPEN_TAG, BLOCKQUOTE_CLOSE_TAG -> output.writeBlockquoteOpenOrClose(token);
-        case PRE_OPEN_TAG -> output.writePreOpen(token);
-        case PRE_CLOSE_TAG -> output.writePreClose(token);
-        case CODE_OPEN_TAG -> output.writeCodeOpen(token);
-        case CODE_CLOSE_TAG -> output.writeCodeClose(token);
-        case TABLE_OPEN_TAG -> output.writeTableOpen(token);
-        case TABLE_CLOSE_TAG -> output.writeTableClose(token);
-        case MOE_BEGIN_STRIP_COMMENT -> output.requestMoeBeginStripComment(token);
-        case MOE_END_STRIP_COMMENT -> output.writeMoeEndStripComment(token);
-        case HTML_COMMENT -> output.writeHtmlComment(token);
-        case BR_TAG -> output.writeBr(standardizeBrToken(token));
-        case WHITESPACE -> output.requestWhitespace();
-        case FORCED_NEWLINE -> output.writeLineBreakNoAutoIndent();
-        case LITERAL -> output.writeLiteral(token);
-        case PARAGRAPH_CLOSE_TAG, LIST_ITEM_CLOSE_TAG, OPTIONAL_LINE_BREAK -> {}
+        case FooterJavadocTagStart t -> output.writeFooterJavadocTagStart(t);
+        case SnippetBegin t -> output.writeSnippetBegin(t);
+        case SnippetEnd t -> output.writeSnippetEnd(t);
+        case ListOpenTag t -> output.writeListOpen(t);
+        case ListCloseTag t -> output.writeListClose(t);
+        case ListItemOpenTag t -> output.writeListItemOpen(t);
+        case HeaderOpenTag t -> output.writeHeaderOpen(t);
+        case HeaderCloseTag t -> output.writeHeaderClose(t);
+        case ParagraphOpenTag t -> output.writeParagraphOpen(standardizePToken(t));
+        case BlockQuoteOpenTag t -> output.writeBlockQuoteOpen(t);
+        case BlockQuoteCloseTag t -> output.writeBlockQuoteClose(t);
+        case PreOpenTag t -> output.writePreOpen(t);
+        case PreCloseTag t -> output.writePreClose(t);
+        case CodeOpenTag t -> output.writeCodeOpen(t);
+        case CodeCloseTag t -> output.writeCodeClose(t);
+        case TableOpenTag t -> output.writeTableOpen(t);
+        case TableCloseTag t -> output.writeTableClose(t);
+        case MoeBeginStripComment t -> output.requestMoeBeginStripComment(t);
+        case MoeEndStripComment t -> output.writeMoeEndStripComment(t);
+        case HtmlComment t -> output.writeHtmlComment(t);
+        case BrTag t -> output.writeBr(standardizeBrToken(t));
+        case Whitespace t -> output.requestWhitespaceOrBlankLine(t);
+        case ForcedNewline unused -> output.writeLineBreakNoAutoIndent();
+        case MarkdownHardLineBreak unused -> output.writeMarkdownHardLineBreak();
+        case Literal t -> output.writeLiteral(t);
+        case MarkdownFencedCodeBlock t -> output.writeMarkdownFencedCodeBlock(t);
+        case MarkdownTable t -> output.writeMarkdownTable(t);
+        case ListItemCloseTag unused -> {}
+        case OptionalLineBreak unused -> {}
+        case ParagraphCloseTag unused -> {}
+        case MarkdownCodeSpanStart unused -> {}
+        case MarkdownCodeSpanEnd unused -> {}
       }
     }
     throw new AssertionError();
@@ -100,20 +157,20 @@ public final class JavadocFormatter {
    * should include them as part of its own postprocessing? Or even the writer could make sense.
    */
 
-  private static Token standardizeBrToken(Token token) {
+  private static BrTag standardizeBrToken(BrTag token) {
     return standardize(token, STANDARD_BR_TOKEN);
   }
 
-  private static Token standardizePToken(Token token) {
+  private static ParagraphOpenTag standardizePToken(ParagraphOpenTag token) {
     return standardize(token, STANDARD_P_TOKEN);
   }
 
-  private static Token standardize(Token token, Token standardToken) {
-    return SIMPLE_TAG_PATTERN.matcher(token.getValue()).matches() ? standardToken : token;
+  private static <T extends Token> T standardize(T token, T standardToken) {
+    return SIMPLE_TAG_PATTERN.matcher(token.value()).matches() ? standardToken : token;
   }
 
-  private static final Token STANDARD_BR_TOKEN = new Token(BR_TAG, "<br>");
-  private static final Token STANDARD_P_TOKEN = new Token(PARAGRAPH_OPEN_TAG, "<p>");
+  private static final BrTag STANDARD_BR_TOKEN = new BrTag("<br>");
+  private static final ParagraphOpenTag STANDARD_P_TOKEN = new ParagraphOpenTag("<p>");
   private static final Pattern SIMPLE_TAG_PATTERN = compile("^<\\w+\\s*/?\\s*>", CASE_INSENSITIVE);
 
   private static final Pattern ONE_CONTENT_LINE_PATTERN = compile(" */[*][*]\n *[*] (.*)\n *[*]/");
@@ -142,11 +199,35 @@ public final class JavadocFormatter {
       return false;
     }
     // If the javadoc contains only a tag, use multiple lines to encourage writing a summary
-    // fragment, unless it's /* @hide */.
+    // fragment, unless it's /** @hide */.
     if (line.startsWith("@") && !line.equals("@hide")) {
       return false;
     }
     return true;
+  }
+
+  private static final CharMatcher NOT_SPACE_OR_TAB = CharMatcher.noneOf(" \t");
+
+  /**
+   * Returns the given string with the leading /// and any common leading whitespace removed from
+   * each line. The resultant string can then be fed to a standard Markdown parser.
+   */
+  private static String markdownCommentText(String input) {
+    List<String> lines =
+        input
+            .lines()
+            .peek(line -> checkState(line.contains("///"), "Line does not contain ///: %s", line))
+            .map(line -> line.substring(line.indexOf("///") + 3))
+            .toList();
+    int leadingSpace =
+        lines.stream()
+            .filter(line -> NOT_SPACE_OR_TAB.matchesAnyOf(line))
+            .mapToInt(NOT_SPACE_OR_TAB::indexIn)
+            .min()
+            .orElse(0);
+    return lines.stream()
+        .map(line -> line.length() < leadingSpace ? "" : line.substring(leadingSpace))
+        .collect(joining("\n"));
   }
 
   private JavadocFormatter() {}

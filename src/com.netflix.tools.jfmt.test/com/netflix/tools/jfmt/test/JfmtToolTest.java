@@ -73,6 +73,17 @@ class JfmtToolTest {
     }
 
     @Test
+    void bundlesCommonMarkLicense() throws Exception {
+        try (var input = tool().getClass()
+                               .getModule()
+                               .getResourceAsStream("META-INF/LICENSE.commonmark")) {
+            assertNotNull(input);
+            String license = new String(input.readAllBytes(), UTF_8);
+            assertTrue(license.startsWith("Copyright (c) 2015, Atlassian Pty Ltd"));
+        }
+    }
+
+    @Test
     void exposesOptionContract() {
         assertOptionContract(tool());
         assertOptionContract(toolProvider());

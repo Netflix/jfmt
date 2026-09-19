@@ -16,11 +16,13 @@ package com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java;
 
 
 import com.netflix.tools.jfmt.internal.com.google.common.collect.ImmutableList;
+import com.netflix.tools.jfmt.internal.com.google.common.collect.ImmutableSet;
 import com.netflix.tools.jfmt.internal.com.google.common.collect.Iterators;
 import com.netflix.tools.jfmt.internal.com.google.common.collect.Range;
 import com.netflix.tools.jfmt.internal.com.google.common.collect.RangeSet;
 import com.netflix.tools.jfmt.internal.com.google.common.collect.TreeRangeSet;
 import com.netflix.tools.jfmt.internal.com.google.errorprone.annotations.Immutable;
+import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.CommentsHelper;
 import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.Doc;
 import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.DocBuilder;
 import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.FormattingError;
@@ -110,14 +112,20 @@ public final class Formatter {
       throw FormatterException.fromJavacDiagnostics(errorDiagnostics);
     }
     OpsBuilder builder = new OpsBuilder(javaInput, javaOutput);
+    ImmutableSet.Builder<Integer> markdownJavadocPositions = ImmutableSet.builder();
     // Output the compilation unit.
-    JavaInputAstVisitor visitor = new JavaInputAstVisitor(builder, options.indentationMultiplier());
+    JavaInputAstVisitor visitor =
+        new JavaInputAstVisitor(builder, options.indentationMultiplier(), markdownJavadocPositions);
     visitor.scan(unit, null);
     builder.sync(javaInput.getText().length());
     builder.drain();
     Doc doc = new DocBuilder().withOps(builder.build()).build();
-    doc.computeBreaks(
-        javaOutput.getCommentsHelper(), UNLIMITED_LINE_WIDTH, new Doc.State(+0, 0));
+    CommentsHelper commentsHelper =
+        new JavaCommentsHelper(
+            Newlines.guessLineSeparator(javaInput.getText()),
+            options,
+            markdownJavadocPositions.build());
+    doc.computeBreaks(commentsHelper, UNLIMITED_LINE_WIDTH, new Doc.State(+0, 0));
     doc.write(javaOutput);
     javaOutput.flush();
   }
@@ -204,7 +212,10 @@ public final class Formatter {
 
     String lineSeparator = Newlines.guessLineSeparator(input);
     JavaOutput javaOutput =
-        new JavaOutput(lineSeparator, javaInput, new JavaCommentsHelper(lineSeparator, options));
+        new JavaOutput(
+            lineSeparator,
+            javaInput,
+            new JavaCommentsHelper(lineSeparator, options, ImmutableSet.of()));
     try {
       format(javaInput, javaOutput, options);
     } catch (FormattingError e) {

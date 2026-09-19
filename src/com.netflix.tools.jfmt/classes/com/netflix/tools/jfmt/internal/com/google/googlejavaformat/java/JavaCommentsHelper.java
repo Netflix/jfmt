@@ -16,6 +16,7 @@ package com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java;
 
 import com.netflix.tools.jfmt.internal.com.google.common.base.CharMatcher;
 import com.netflix.tools.jfmt.internal.com.google.common.base.Strings;
+import com.netflix.tools.jfmt.internal.com.google.common.collect.ImmutableSet;
 import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.CommentsHelper;
 import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.Input.Tok;
 import com.netflix.tools.jfmt.internal.com.google.googlejavaformat.Newlines;
@@ -27,14 +28,19 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** {@code JavaCommentsHelper} extends {@link CommentsHelper} to rewrite Java comments. */
-public final class JavaCommentsHelper implements CommentsHelper {
+final class JavaCommentsHelper implements CommentsHelper {
 
   private final String lineSeparator;
   private final JavaFormatterOptions options;
+  private final ImmutableSet<Integer> markdownJavadocPositions;
 
-  public JavaCommentsHelper(String lineSeparator, JavaFormatterOptions options) {
+  JavaCommentsHelper(
+      String lineSeparator,
+      JavaFormatterOptions options,
+      ImmutableSet<Integer> markdownJavadocPositions) {
     this.lineSeparator = lineSeparator;
     this.options = options;
+    this.markdownJavadocPositions = markdownJavadocPositions;
   }
 
   @Override
@@ -47,7 +53,13 @@ public final class JavaCommentsHelper implements CommentsHelper {
         && options.formatJavadoc()
         && (!options.preserveJavadocWrapping()
             || javadocNeedsFormatting(text, options.javadocWidth()))) {
-      text = JavadocFormatter.formatJavadoc(text, column0, options.javadocWidth());
+      if (text.startsWith("///")) {
+        if (markdownJavadocPositions.contains(tok.getPosition())) {
+          return JavadocFormatter.formatJavadoc(text, column0, options.javadocWidth());
+        }
+      } else {
+        text = JavadocFormatter.formatJavadoc(text, column0, options.javadocWidth());
+      }
     }
     List<String> lines = new ArrayList<>();
     Iterator<String> it = Newlines.lineIterator(text);
@@ -59,7 +71,7 @@ public final class JavaCommentsHelper implements CommentsHelper {
       }
     }
     if (tok.isSlashSlashComment()) {
-      return indentLineComments(lines, column0);
+      return indentLineComments(tok, lines, column0);
     }
     return CommentsHelper.reformatParameterComment(tok)
         .orElseGet(
@@ -119,9 +131,9 @@ public final class JavaCommentsHelper implements CommentsHelper {
   }
 
   // Wraps and re-indents line comments.
-  private String indentLineComments(List<String> lines, int column0) {
+  private String indentLineComments(Tok tok, List<String> lines, int column0) {
     if (options.wrapLineComments()) {
-      lines = wrapLineComments(lines, column0);
+      lines = wrapLineComments(tok, lines, column0);
     }
     StringBuilder builder = new StringBuilder();
     builder.append(lines.get(0).trim());
@@ -137,9 +149,15 @@ public final class JavaCommentsHelper implements CommentsHelper {
   private static final Pattern LINE_COMMENT_MISSING_SPACE_PREFIX =
       Pattern.compile("^(//+)(?!noinspection|\\$NON-NLS-\\d+\\$)[^\\s/]");
 
-  private List<String> wrapLineComments(List<String> lines, int column0) {
+  private List<String> wrapLineComments(Tok tok, List<String> lines, int column0) {
     List<String> result = new ArrayList<>();
     for (String line : lines) {
+      if (markdownJavadocPositions.contains(tok.getPosition())) {
+        // Don't wrap markdown comments. Eventually we will format them properly, but for now at
+        // least don't mangle them by wrapping with `// ` on the continuation lines.
+        result.add(line);
+        continue;
+      }
       // Add missing leading spaces to line comments: `//foo` -> `// foo`.
       Matcher matcher = LINE_COMMENT_MISSING_SPACE_PREFIX.matcher(line);
       if (matcher.find()) {

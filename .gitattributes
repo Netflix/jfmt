@@ -1,0 +1,2 @@
+vendor/*.patch whitespace=-trailing-space
+src/com.netflix.tools.jfmt/classes/com/netflix/tools/jfmt/internal/org/commonmark/** whitespace=-trailing-space
