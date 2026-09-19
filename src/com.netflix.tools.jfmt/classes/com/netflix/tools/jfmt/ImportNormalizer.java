@@ -655,16 +655,21 @@ final class ImportNormalizer {
             return false;
         }
 
-        private static boolean canImport(TypeElement type) {
+        private boolean canImport(TypeElement type) {
             Element current = type;
             while (current.getEnclosingElement() != null
                     && !(current.getEnclosingElement() instanceof PackageElement)) {
                 current = current.getEnclosingElement();
             }
-            if (!(current.getEnclosingElement() instanceof PackageElement owner)) {
+            if (!(current instanceof TypeElement topLevel)
+                    || !(current.getEnclosingElement() instanceof PackageElement owner)) {
                 return false;
             }
-            return current == type || !owner.isUnnamed();
+            boolean declaredInUnit = unit.getTypeDecls().stream()
+                    .filter(ClassTree.class::isInstance)
+                    .map(ClassTree.class::cast)
+                    .anyMatch(declaration -> declaration.getSimpleName().contentEquals(topLevel.getSimpleName()));
+            return !declaredInUnit && (current == type || !owner.isUnnamed());
         }
 
         private boolean needsImport(TypeElement type) {
