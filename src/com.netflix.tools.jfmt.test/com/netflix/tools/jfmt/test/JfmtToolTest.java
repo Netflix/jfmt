@@ -158,6 +158,28 @@ class JfmtToolTest {
     }
 
     @Test
+    void normalizesQualifiedRecordComponentWithCompactConstructor() throws Exception {
+        Path source = write(temporaryDirectory.resolve("Example.java"), "record Example(java.util.Optional<String> value){Example{if(value.isEmpty())throw new IllegalArgumentException();}}");
+
+        Invocation invocation = run("", source.toString());
+
+        assertEquals(0, invocation.exitCode(), invocation.error());
+        assertEquals(
+                """
+                import java.util.Optional;
+
+                record Example(Optional<String> value) {
+                    Example {
+                        if (value.isEmpty()) {
+                            throw new IllegalArgumentException();
+                        }
+                    }
+                }
+                """,
+                Files.readString(source));
+    }
+
+    @Test
     void runsWithJdkCompilerDefinedInTheSameChildLayer() throws Exception {
         var parent = getClass().getModule().getLayer();
         var jfmtReference = parent.configuration()
