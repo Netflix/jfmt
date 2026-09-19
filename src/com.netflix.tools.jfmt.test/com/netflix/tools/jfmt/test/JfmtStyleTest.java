@@ -21,6 +21,77 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class JfmtStyleTest {
 
     @Test
+    void keepsAdjacentBlockCommentsSeparatedAndStable() {
+        String input =
+                """
+                /*
+                 * License.
+                 */
+
+                /** Type documentation. */
+                class Example {}
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(
+                """
+                /*
+                 * License.
+                 */
+                /** Type documentation. */
+                class Example {}
+                """,
+                formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void leavesAdjacentCommentMarkersInsideStringsUntouched() {
+        String input = "class Example {\n"
+                + "String value = \"*//**\";\n"
+                + "String text = \"\"\"\n"
+                + "*//**\n"
+                + "\"\"\";\n"
+                + "}\n";
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(2, formatted.split("\\*//\\*\\*", -1).length - 1);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void keepsLongSwitchArmsStable() {
+        String input =
+                """
+                final class MavenCommand {
+                    private final ToolRuntime tools;
+                    private final List<ToolDefinition> definitions;
+                    private final ResolutionOptions javadocOptions;
+
+                    int run(JaInvocation commandLine, ModuleSourcePath moduleSourcePath, InputStream in,
+                            PrintStream out, PrintStream err)
+                            throws IOException {
+                        if (commandLine.toolArguments().isEmpty()) {
+                            throw new IllegalArgumentException("maven requires an operation: export, install, deploy, or deploy-central");
+                        }
+                        return switch (commandLine.toolArguments().getFirst()) {
+                            case "export" -> new MavenExporter(tools).run(commandLine, moduleSourcePath, in, out, err);
+                            case "install", "deploy", "deploy-central" -> new MavenDeploymentCommand(tools, definitions,
+                                    javadocOptions).run(commandLine, moduleSourcePath, in, out, err);
+                            default -> throw new IllegalArgumentException("Unknown maven operation: " + commandLine.toolArguments().getFirst());
+                        };
+                    }
+                }
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
     void placesStaticImportsAfterOrdinaryImports() {
         String input = "import static java.util.Collections.emptyList;import sun.misc.Unsafe;import java.util.List;import jdk.internal.misc.VM;class Example{List<?> values=emptyList();Unsafe unsafe;Class<?> vm=VM.class;}";
         String expected =
