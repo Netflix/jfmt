@@ -46,13 +46,12 @@ public class ImportOrderer {
   }
 
   private String reorderImports() throws FormatterException {
-    int firstImportStart;
     Optional<Integer> maybeFirstImport = findIdentifier(0, IMPORT_OR_CLASS_START);
     if (!maybeFirstImport.isPresent() || !tokenAt(maybeFirstImport.get()).equals("import")) {
       // No imports, so nothing to do.
       return text;
     }
-    firstImportStart = maybeFirstImport.get();
+    int firstImportStart = maybeFirstImport.get();
     int unindentedFirstImportStart = unindent(firstImportStart);
 
     ImportsAndIndex imports = scanImports(firstImportStart);
@@ -131,37 +130,28 @@ public class ImportOrderer {
     this.importComparator = JDK_IMPORT_COMPARATOR;
   }
 
-  enum ImportType {
+  private enum ImportType {
     STATIC,
     MODULE,
     NORMAL
   }
 
-  /** An import statement. */
-  class Import {
-    private final String imported;
-    private final String trailing;
-    private final ImportType importType;
-
-    Import(String imported, String trailing, ImportType importType) {
-      this.imported = imported;
-      this.trailing = trailing;
-      this.importType = importType;
-    }
-
-    /** The name being imported, for example {@code java.util.List}. */
-    String imported() {
-      return imported;
-    }
-
-    /** Returns the {@link ImportType}. */
-    ImportType importType() {
-      return importType;
-    }
-
+  /**
+   * An import statement.
+   *
+   * @param imported the name being imported, for example {@code java.util.List}.
+   * @param trailing the {@code //} comment lines after the final {@code ;}, up to and including the
+   *     line terminator of the last one. Note: In case two imports were separated by a space (which
+   *     is disallowed by the style guide), the trailing whitespace of the first import does not
+   *     include a line terminator.
+   * @param importType the {@link ImportType} of the import.
+   * @param lineSeparator the line separator to use when formatting the import.
+   */
+  private record Import(
+      String imported, String trailing, ImportType importType, String lineSeparator) {
     /** The top-level package of the import. */
     String topLevel() {
-      return DOT_SPLITTER.split(imported()).iterator().next();
+      return DOT_SPLITTER.split(imported).iterator().next();
     }
 
     /** True if this import belongs to the Java platform. */
@@ -170,16 +160,6 @@ public class ImportOrderer {
         case "java", "javax" -> true;
         default -> false;
       };
-    }
-
-    /**
-     * The {@code //} comment lines after the final {@code ;}, up to and including the line
-     * terminator of the last one. Note: In case two imports were separated by a space (which is
-     * disallowed by the style guide), the trailing whitespace of the first import does not include
-     * a line terminator.
-     */
-    String trailing() {
-      return trailing;
     }
 
     // One or multiple lines, the import itself and following comments, including the line
@@ -211,15 +191,7 @@ public class ImportOrderer {
     return sb.toString();
   }
 
-  private static class ImportsAndIndex {
-    final ImmutableSortedSet<Import> imports;
-    final int index;
-
-    ImportsAndIndex(ImmutableSortedSet<Import> imports, int index) {
-      this.imports = imports;
-      this.index = index;
-    }
-  }
+  private record ImportsAndIndex(ImmutableSortedSet<Import> imports, int index) {}
 
   /**
    * Scans a sequence of import lines. The parsing uses this approximate grammar:
@@ -297,7 +269,7 @@ public class ImportOrderer {
         // Extra semicolons are not allowed by the JLS but are accepted by javac.
         i++;
       }
-      imports.add(new Import(importedName, trailing.toString(), importType));
+      imports.add(new Import(importedName, trailing.toString(), importType, lineSeparator));
       // Remember the position just after the import we just saw, before skipping blank lines.
       // If the next thing after the blank lines is not another import then we don't want to
       // include those blank lines in the text to be replaced.

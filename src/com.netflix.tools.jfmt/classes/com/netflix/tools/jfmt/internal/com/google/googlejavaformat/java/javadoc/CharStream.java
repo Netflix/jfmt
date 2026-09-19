@@ -14,11 +14,8 @@
 
 package com.netflix.tools.jfmt.internal.com.google.googlejavaformat.java.javadoc;
 
-import static com.netflix.tools.jfmt.internal.com.google.common.base.Preconditions.checkArgument;
 import static com.netflix.tools.jfmt.internal.com.google.common.base.Preconditions.checkNotNull;
 
-import java.util.HashMap;
-import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -27,50 +24,50 @@ import java.util.regex.Pattern;
  * methods to specify what characters they expect and then {@link #readAndResetRecorded} to retrieve
  * and consume the matched characters. This is a slightly odd API -- why not just return the matched
  * characters from tryConsume? -- but it is convenient for the lexer.
- *
- * <p>Tracks a position in the original input string rather than creating substrings, and reuses a
- * single {@link Matcher} instance per pattern to avoid allocation on every probe.
  */
 final class CharStream {
   private final String input;
-  private final Map<Pattern, Matcher> matchers = new HashMap<>();
-  private int pos;
-  private int toConsume;
+  private int position;
+  private int tokenEnd = -1; // Negative value means no token, and will cause an exception if used.
 
   CharStream(String input) {
     this.input = checkNotNull(input);
   }
 
   boolean tryConsume(String expected) {
-    if (!input.startsWith(expected, pos)) {
+    if (!input.startsWith(expected, position)) {
       return false;
     }
-    toConsume = expected.length();
+    tokenEnd = position + expected.length();
     return true;
   }
 
-  /*
+  /**
+   * Tries to consume characters from the current position that match the given pattern.
+   *
    * @param pattern the pattern to search for, which must be anchored to match only at position 0
    */
   boolean tryConsumeRegex(Pattern pattern) {
-    Matcher matcher = matchers.computeIfAbsent(pattern, p -> p.matcher(input));
-    matcher.region(pos, input.length());
-    if (!matcher.find()) {
+    Matcher matcher = pattern.matcher(input).region(position, input.length());
+    if (!matcher.lookingAt()) {
       return false;
     }
-    checkArgument(matcher.start() == pos);
-    toConsume = matcher.end() - pos;
+    tokenEnd = matcher.end();
     return true;
   }
 
   String readAndResetRecorded() {
-    String result = input.substring(pos, pos + toConsume);
-    pos += toConsume;
-    toConsume = 0;
+    String result = input.substring(position, tokenEnd);
+    position = tokenEnd;
+    tokenEnd = -1;
     return result;
   }
 
   boolean isExhausted() {
-    return pos >= input.length();
+    return position == input.length();
+  }
+
+  int position() {
+    return position;
   }
 }

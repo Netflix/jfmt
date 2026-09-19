@@ -49,6 +49,38 @@ class JfmtCommentTest {
     }
 
     @Test
+    void formatsMarkdownJavadoc() {
+        String input =
+                """
+                class Example {
+                /// Returns the configured value after resolving every inherited setting from the surrounding service and its parent configuration.
+                ///
+                /// - first value
+                /// - second value
+                Object value(){return null;}
+                }
+                """;
+        String expected =
+                """
+                class Example {
+                    /// Returns the configured value after resolving every inherited setting
+                    /// from the surrounding service and its parent configuration.
+                    ///
+                    /// - first value
+                    /// - second value
+                    Object value() {
+                        return null;
+                    }
+                }
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
     void doesNotBreakAnInlineTagThatCrossesTheJavadocWidth() {
         String input =
                 """

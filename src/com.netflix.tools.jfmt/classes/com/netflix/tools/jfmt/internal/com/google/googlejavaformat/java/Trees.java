@@ -18,7 +18,6 @@ import static java.nio.charset.StandardCharsets.UTF_8;
 
 import com.netflix.tools.jfmt.internal.com.google.common.base.Throwables;
 import com.netflix.tools.jfmt.internal.com.google.common.collect.ImmutableList;
-import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.CompoundAssignmentTree;
 import com.sun.source.tree.ExpressionTree;
@@ -73,7 +72,7 @@ class Trees {
   }
 
   /** Returns the source end position of the node. */
-  public static int getEndPosition(Tree tree, CompilationUnitTree unit) {
+  static int getEndPosition(Tree tree, CompilationUnitTree unit) {
     try {
       return (int) GET_END_POS_HANDLE.invokeExact((JCTree) tree, (JCCompilationUnit) unit);
     } catch (Throwable e) {
@@ -96,15 +95,19 @@ class Trees {
   /** Returns the simple name of a (possibly qualified) method invocation expression. */
   static Name getMethodName(MethodInvocationTree methodInvocation) {
     ExpressionTree select = methodInvocation.getMethodSelect();
-    return select instanceof MemberSelectTree
-        ? ((MemberSelectTree) select).getIdentifier()
-        : ((IdentifierTree) select).getName();
+    return switch (select) {
+      case MemberSelectTree memberSelect -> memberSelect.getIdentifier();
+      case IdentifierTree identifier -> identifier.getName();
+      default -> throw new AssertionError(select);
+    };
   }
 
   /** Returns the receiver of a qualified method invocation expression, or {@code null}. */
-  static ExpressionTree getMethodReceiver(MethodInvocationTree methodInvocation) {
+  static @Nullable ExpressionTree getMethodReceiver(MethodInvocationTree methodInvocation) {
     ExpressionTree select = methodInvocation.getMethodSelect();
-    return select instanceof MemberSelectTree ? ((MemberSelectTree) select).getExpression() : null;
+    return select instanceof MemberSelectTree memberSelectTree
+        ? memberSelectTree.getExpression()
+        : null;
   }
 
   /** Returns the string name of an operator, including assignment and compound assignment. */
@@ -124,22 +127,6 @@ class Trees {
   /** Returns the precedence of an expression's operator. */
   static int precedence(ExpressionTree expression) {
     return TreeInfo.opPrec(((JCTree) expression).getTag());
-  }
-
-  /**
-   * Returns the enclosing type declaration (class, enum, interface, or annotation) for the given
-   * path.
-   */
-  static ClassTree getEnclosingTypeDeclaration(TreePath path) {
-    for (; path != null; path = path.getParentPath()) {
-      switch (path.getLeaf().getKind()) {
-        case CLASS, ENUM, INTERFACE, ANNOTATED_TYPE -> {
-          return (ClassTree) path.getLeaf();
-        }
-        default -> {}
-      }
-    }
-    throw new AssertionError();
   }
 
   /** Skips a single parenthesized tree. */

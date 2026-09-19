@@ -60,7 +60,7 @@ import javax.tools.SimpleJavaFileObject;
 import com.netflix.tools.jfmt.internal.org.jspecify.annotations.Nullable;
 
 /** {@code JavaInput} extends {@link Input} to represent a Java input document. */
-public final class JavaInput extends Input {
+final class JavaInput extends Input {
   /**
    * A {@code JavaInput} is a sequence of {@link Tok}s that cover the Java input. A {@link Tok} is
    * either a token (if {@code isToken()}), or a non-token, which is a comment (if {@code
@@ -161,9 +161,13 @@ public final class JavaInput extends Input {
 
     @Override
     public boolean isJavadocComment() {
-      // comments like `/***` are also javadoc, but their formatting probably won't be improved
-      // by the javadoc formatter
-      return text.startsWith("/**") && text.charAt("/**".length()) != '*' && text.length() > 4;
+      // comments like `/***` or `////` are also javadoc, but their formatting probably won't be
+      // improved by the javadoc formatter
+      return ((text.startsWith("/**") && !text.startsWith("/***"))
+              || (Runtime.version().feature() >= 23
+                  && text.startsWith("///")
+                  && !text.startsWith("////")))
+          && text.length() > 4;
     }
 
     @Override
@@ -277,7 +281,7 @@ public final class JavaInput extends Input {
    * @param text the input text
    * @throws FormatterException if the input cannot be parsed
    */
-  public JavaInput(String text) throws FormatterException {
+  JavaInput(String text) throws FormatterException {
     this.text = checkNotNull(text);
     this.chars = text.toCharArray();
     setLines(ImmutableList.copyOf(Newlines.lineIterator(text)));
@@ -623,7 +627,7 @@ public final class JavaInput extends Input {
    * @return the {@code 0}-based {@link Range} of tokens
    * @throws FormatterException if the upper endpoint of the range is outside the file
    */
-  Range<Integer> characterRangeToTokenRange(Range<Integer> characterRange)
+  private Range<Integer> characterRangeToTokenRange(Range<Integer> characterRange)
       throws FormatterException {
     if (characterRange.upperEndpoint() > text.length()) {
       throw new FormatterException(
@@ -714,11 +718,11 @@ public final class JavaInput extends Input {
 
   // TODO(cushon): refactor JavaInput so the CompilationUnit can be passed into
   // the constructor.
-  public void setCompilationUnit(JCCompilationUnit unit) {
+  void setCompilationUnit(JCCompilationUnit unit) {
     this.unit = unit;
   }
 
-  public RangeSet<Integer> characterRangesToTokenRanges(Collection<Range<Integer>> characterRanges)
+  RangeSet<Integer> characterRangesToTokenRanges(Collection<Range<Integer>> characterRanges)
       throws FormatterException {
     RangeSet<Integer> tokenRangeSet = TreeRangeSet.create();
     for (Range<Integer> characterRange : characterRanges) {
