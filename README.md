@@ -72,3 +72,108 @@ The [wiki](https://github.com/Netflix/jfmt/wiki) covers:
 The formatter incorporates and adapts [google-java-format](https://github.com/google/google-java-format), Copyright 2015 Google Inc. Integrated dependencies are relocated beneath `com.netflix.tools.jfmt.internal` to prevent conflicts with application modules. [`INTERNAL.md`](src/com.netflix.tools.jfmt/INTERNAL.md) records their versions and provenance.
 
 The project is licensed under the [Apache License 2.0](LICENSE). Third-party components retain the licenses recorded in [NOTICE](NOTICE).
+
+## Examples
+
+This formatter adapts google-java-format's parser and layout engine to implement a fixed dialect based on OpenJDK and Sun conventions. The difference is visible in this stream pipeline, which google-java-format 1.36.1 formats as:
+
+```java
+import static java.util.Objects.requireNonNull;
+
+import java.time.Instant;
+import java.util.List;
+
+final class OrderService {
+  List<Order> readyOrders(List<Order> orders, Instant cutoff) {
+    return requireNonNull(orders).stream()
+        .filter(
+            order ->
+                order.createdAt().isBefore(cutoff)
+                    && order.isPaid()
+                    && order.items().stream().allMatch(Item::inStock)
+                    && !order.isCancelled())
+        .map(order -> new Order(order.id(), order.customer(), order.items(), Status.READY))
+        .toList();
+  }
+
+  void dispatch(Order order) {
+    if (order.isReady()) dispatcher.submit(order);
+  }
+}
+```
+
+Formatting the same source produces:
+
+```java
+import java.time.Instant;
+import java.util.List;
+
+import static java.util.Objects.requireNonNull;
+
+final class OrderService {
+    List<Order> readyOrders(List<Order> orders, Instant cutoff) {
+        return requireNonNull(orders).stream()
+                .filter(order ->
+                        order.createdAt().isBefore(cutoff)
+                                && order.isPaid()
+                                && order.items().stream()
+                                        .allMatch(Item::inStock)
+                                && !order.isCancelled())
+                .map(order -> new Order(order.id(), order.customer(), order.items(),
+                        Status.READY))
+                .toList();
+    }
+
+    void dispatch(Order order) {
+        if (order.isReady()) {
+            dispatcher.submit(order);
+        }
+    }
+}
+```
+
+Block indentation is 4 spaces and continuation indentation is 8 spaces. Line breaks follow Java structure, ordinary imports precede static imports, and braces are inserted around the `if` body.
+
+### Semantic import normalization
+
+For file inputs with a satisfiable compile context, wildcard imports are expanded and qualified type references are simplified. Given this already laid-out source:
+
+```java
+package example;
+
+import java.time.Instant;
+import java.util.*;
+
+final class Window {
+    private final List<Instant> timestamps = new ArrayList<>();
+
+    java.time.Duration elapsed() {
+        if (timestamps.isEmpty()) {
+            return java.time.Duration.ZERO;
+        }
+        return java.time.Duration.between(timestamps.getFirst(), timestamps.getLast());
+    }
+}
+```
+
+Formatting `Window.java` produces:
+
+```java
+package example;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+
+final class Window {
+    private final List<Instant> timestamps = new ArrayList<>();
+
+    Duration elapsed() {
+        if (timestamps.isEmpty()) {
+            return Duration.ZERO;
+        }
+        return Duration.between(timestamps.getFirst(), timestamps.getLast());
+    }
+}
+```
