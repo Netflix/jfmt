@@ -25,9 +25,10 @@ The formatter is built on [google-java-format](https://github.com/google/google-
 
 Follow the `ja` [Installation Guide](https://github.com/Netflix/ja#installation) to create a `ja`-enabled development JDK. The JDK includes the `jfmt` command, and `ja fmt` uses it when formatting source modules.
 
-For standalone use, download the modular JAR from [Maven Central](https://central.sonatype.com/artifact/com.netflix/com.netflix.tools.jfmt). JDK 25 or later is required. The JAR contains its runtime dependencies:
+For standalone use, download the modular JAR from [Maven Central](https://central.sonatype.com/artifact/com.netflix/com.netflix.tools.jfmt). JDK 25 or later is required. The JAR contains its runtime dependencies and can be run directly or as module `com.netflix.tools.jfmt`:
 
 ```sh
+java -jar com.netflix.tools.jfmt-VERSION.jar File.java
 java --module-path com.netflix.tools.jfmt-VERSION.jar --module com.netflix.tools.jfmt File.java
 ```
 
