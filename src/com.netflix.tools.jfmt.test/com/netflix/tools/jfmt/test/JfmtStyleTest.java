@@ -206,6 +206,172 @@ class JfmtStyleTest {
     }
 
     @Test
+    void breaksNamedAnnotationMembersIntoIndividualRows() {
+        String input =
+                "@DataSourceDefinition(name=\"java:comp/MyDS\",className=\"org.postgresql.ds.PGSimpleDataSource\",url=\"jdbc:postgresql://localhost:5432/postgres\",user=\"postgres\",password=\"postgres\")class Example{}";
+        String expected =
+                """
+                @DataSourceDefinition(
+                        name = "java:comp/MyDS",
+                        className = "org.postgresql.ds.PGSimpleDataSource",
+                        url = "jdbc:postgresql://localhost:5432/postgres",
+                        user = "postgres",
+                        password = "postgres")
+                class Example {}
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void keepsCompactAnnotationMembersTogether() {
+        String input = "@A(a=\"x\",b=\"y\")@SuppressWarnings(\"unchecked\")class Example{}";
+        String expected =
+                """
+                @A(a = "x", b = "y")
+                @SuppressWarnings("unchecked")
+                class Example {}
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void separatesDistantAnnotationMembersWithoutAColumnLimit() {
+        String value = "x".repeat(200);
+        String input = "@A(a=\"" + value + "\",b=\"y\")class Example{}";
+        String expected =
+                """
+                @A(
+                        a = "%s",
+                        b = "y")
+                class Example {}
+                """.formatted(value);
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void keepsASolitaryLongAnnotationMemberTogether() {
+        String value = "x".repeat(200);
+        String input = "@A(a=\"" + value + "\")class Example{}";
+        String expected =
+                """
+                @A(a = "%s")
+                class Example {}
+                """.formatted(value);
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void keepsALongFinalAnnotationMemberTogether() {
+        String value = "x".repeat(200);
+        String input = "@A(a=\"y\",b=\"" + value + "\")class Example{}";
+        String expected =
+                """
+                @A(a = "y", b = "%s")
+                class Example {}
+                """.formatted(value);
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void annotationLayoutDoesNotDependOnAuthoredWhitespace() {
+        String value = "x".repeat(69);
+        String expected =
+                """
+                @A(
+                        a = "%s",
+                        b = "y")
+                class Example {}
+                """.formatted(value);
+        for (String input : new String[] {
+                "@A(a=\"" + value + "\",b=\"y\")class Example{}",
+                "@A(a = \"" + value + "\", b = \"y\") class Example {}",
+                "@A(\n    a = \"" + value + "\",\n    b = \"y\")\nclass Example {}"
+        }) {
+            String formatted = JfmtTestSupport.format(input);
+
+            assertEquals(expected, formatted);
+            assertEquals(formatted, JfmtTestSupport.format(formatted));
+        }
+    }
+
+    @Test
+    void countsNamedAnnotationMemberStructure() {
+        String input = "@A(a=1,b=2,c=3,d=4)class Example{}";
+        String expected =
+                """
+                @A(
+                        a = 1,
+                        b = 2,
+                        c = 3,
+                        d = 4)
+                class Example {}
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void propagatesNestedAnnotationMemberLayouts() {
+        String input = "@A(a=1,b=@B(a=1,b=2,c=3,d=4))class Example{}";
+        String expected =
+                """
+                @A(
+                        a = 1,
+                        b = @B(
+                                a = 1,
+                                b = 2,
+                                c = 3,
+                                d = 4))
+                class Example {}
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void separatesAnnotationMembersContainingArrays() {
+        String input = "@A(a={\"x\",\"y\"},b=\"z\")class Example{}";
+        String expected =
+                """
+                @A(
+                        a = {"x", "y"},
+                        b = "z")
+                class Example {}
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
     void indentsSwitchExpressionBlockAndYield() {
         String input = "class Example{Calendar create(String type){return switch(type){case \"gregory\"->new GregorianCalendar();case \"iso8601\"->{GregorianCalendar calendar=new GregorianCalendar();calendar.setGregorianChange(new Date(Long.MIN_VALUE));yield calendar;}default->throw new IllegalArgumentException(type);};}}";
         String expected =
@@ -1682,8 +1848,143 @@ class JfmtStyleTest {
     }
 
     @Test
+    void argumentLayoutDoesNotDependOnAuthoredWhitespace() {
+        String value = "x".repeat(138);
+        String expected =
+                """
+                class Example {
+                    void run() {
+                        check(
+                                make("%s", 0),
+                                value);
+                    }
+                }
+                """.formatted(value);
+        for (String arguments : new String[] {
+                "make(\"" + value + "\",0),value",
+                "make(\"" + value + "\", 0), value",
+                "make(\"" + value + "\",\n        0),\n        value"
+        }) {
+            String input = "class Example{void run(){check(" + arguments + ");}}";
+            String formatted = JfmtTestSupport.format(input);
+
+            assertEquals(expected, formatted);
+            assertEquals(formatted, JfmtTestSupport.format(formatted));
+        }
+    }
+
+    @Test
+    void formatsStringArgumentsWithoutMethodNameExceptions() {
+        String value = "x".repeat(200) + "%s%s%s";
+        for (String method : new String[] {"format", "printf", "render"}) {
+            String input = "class Example{void run(){" + method + "(\"" + value
+                    + "\" + \"%s%s%s\",one,two,three,four,five,six);}}";
+            String expected =
+                    """
+                    class Example {
+                        void run() {
+                            METHOD("VALUE" + "%s%s%s",
+                                    one, two, three, four, five, six);
+                        }
+                    }
+                    """.replace("METHOD", method).replace("VALUE", value);
+
+            String formatted = JfmtTestSupport.format(input);
+
+            assertEquals(expected, formatted);
+            assertEquals(formatted, JfmtTestSupport.format(formatted));
+        }
+    }
+
+    @Test
+    void propagatesLayoutsThroughAssignmentArguments() {
+        String input =
+                "class Example{void run(){check(result=invoke(one,two,three,four,five,six,seven),other);}}";
+        String expected =
+                """
+                class Example {
+                    void run() {
+                        check(
+                                result = invoke(one, two, three, four, five, six,
+                                        seven),
+                                other);
+                    }
+                }
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void givesAWrappedArrayElementItsOwnRow() {
+        String input =
+                "class Example{void run(){Object[] values={invoke(one,two,three,four,five,six,seven),other};}}";
+        String expected =
+                """
+                class Example {
+                    void run() {
+                        Object[] values = {
+                            invoke(one, two, three, four, five, six,
+                                    seven),
+                            other
+                        };
+                    }
+                }
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void retainsArgumentTablesWithContinuationIndent() {
+        String input =
+                """
+                class Example {
+                    void run() {
+                        check(
+                                1, 2,
+                                3, 4,
+                                5, 6);
+                    }
+                }
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(input, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void argumentTablesOwnOptionalWrappingInsideTheirRows() {
+        String input =
+                """
+                class Example {
+                    void run() {
+                        check(
+                                extraordinarilyLongReceiverName.get(0).devName(), 0,
+                                extraordinarilyLongReceiverName.get(1).devName(), 1,
+                                extraordinarilyLongReceiverName.get(2).devName(), 2);
+                    }
+                }
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(input, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
     void wrapsArrayOfLongLiterals() {
-        String input = "class Example{void run(){String[] options={\"--module-path=/some/path\",\"--add-modules=com.example.app\",\"--add-exports=java.base/java.lang=com.example\",\"--enable-preview\",\"--patch-module=com.example.app=classes\",\"--upgrade-module-path=/some/upgrade/path\"};}}";
+        String input =
+                "class Example{void run(){String[] options={\"--module-path=/some/path\",\"--add-modules=com.example.app\",\"--add-exports=java.base/java.lang=com.example\",\"--enable-preview\",\"--patch-module=com.example.app=classes\",\"--upgrade-module-path=/some/upgrade/path\"};}}";
         String expected =
                 """
                 class Example {
@@ -1898,8 +2199,8 @@ class JfmtStyleTest {
                 class Example {
                     void run() {
                         values.stream()
-                                .map(value -> value.name())
-                                .forEach(name -> use(name));
+                              .map(value -> value.name())
+                              .forEach(name -> use(name));
                     }
                 }
                 """;
@@ -2179,15 +2480,15 @@ class JfmtStyleTest {
     }
 
     @Test
-    void breaksBetweenChainedCallsWhoseArgumentListsAlreadyWrap() {
-        String input = "class Example{void run(){int result=new CommandRunner(ModuleLayer.boot(),tools,new ToolCatalog(List.of()),()->null).run(commandLine,InputStream.nullInputStream(),new PrintStream(new ByteArrayOutputStream()),new PrintStream(new ByteArrayOutputStream()));}}";
+    void prefersEnclosingChainBreakToArgumentWrapping() {
+        String input =
+                "class Example{void run(){int result=new CommandRunner(ModuleLayer.boot(),tools,new ToolCatalog(List.of()),()->null).run(commandLine,InputStream.nullInputStream(),new PrintStream(new ByteArrayOutputStream()),new PrintStream(new ByteArrayOutputStream()));}}";
         String expected =
                 """
                 class Example {
                     void run() {
                         int result = new CommandRunner(ModuleLayer.boot(), tools, new ToolCatalog(List.of()), () -> null)
-                                .run(commandLine, InputStream.nullInputStream(), new PrintStream(new ByteArrayOutputStream()),
-                                        new PrintStream(new ByteArrayOutputStream()));
+                                .run(commandLine, InputStream.nullInputStream(), new PrintStream(new ByteArrayOutputStream()), new PrintStream(new ByteArrayOutputStream()));
                     }
                 }
                 """;
@@ -2208,6 +2509,63 @@ class JfmtStyleTest {
                         var logLines = log.toString()
                                           .lines()
                                           .toList();
+                    }
+                }
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void countsCallsThroughReceiverWrappersAndFieldAccess() {
+        String input =
+                "class Example{void run(){client.first().second().third();(client.first()).second().third();client.first().field.second().third();first().second().third();client.first()[0].second().third();((Factory)client.first()).second().third();}}";
+        String expected =
+                """
+                class Example {
+                    void run() {
+                        client.first()
+                              .second()
+                              .third();
+                        (client.first())
+                                .second()
+                                .third();
+                        client.first()
+                              .field
+                              .second()
+                              .third();
+                        first()
+                                .second()
+                                .third();
+                        client.first()[0]
+                              .second()
+                              .third();
+                        ((Factory) client.first())
+                                .second()
+                                .third();
+                    }
+                }
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void countsConstructorCallsInChains() {
+        String input = "class Example{void run(){new Factory().first().second();}}";
+        String expected =
+                """
+                class Example {
+                    void run() {
+                        new Factory()
+                                .first()
+                                .second();
                     }
                 }
                 """;
@@ -2253,6 +2611,243 @@ class JfmtStyleTest {
 
         assertEquals(expected, formatted);
         assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void intermediateCallsSupplyTheirOwnArgumentContext() {
+        String input =
+                "class Example{void run(){extraordinarilyLongReceiverName.accept(all.get(0).devName());extraordinarilyLongReceiverName.accept(all.get(0).devName()).finish();}}";
+        String expected =
+                """
+                class Example {
+                    void run() {
+                        extraordinarilyLongReceiverName.accept(all.get(0)
+                                .devName());
+                        extraordinarilyLongReceiverName.accept(all.get(0)
+                                .devName())
+                                .finish();
+                    }
+                }
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void measuresNestedChainDistanceThroughParentheses() {
+        String input =
+                "class Example{void run(){check(extraordinarilyLongReceiverName.get(0).devName());check((extraordinarilyLongReceiverName.get(0)).devName());}}";
+        String expected =
+                """
+                class Example {
+                    void run() {
+                        check(extraordinarilyLongReceiverName.get(0)
+                                .devName());
+                        check((extraordinarilyLongReceiverName.get(0))
+                                .devName());
+                    }
+                }
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void keepsCompactNestedMethodChainsTogether() {
+        String input =
+                "class Example{void run(){Assertions.assertEquals(\"Duke Jakarta\",all.get(0).devName());check(all.get(0).devName());check((all.get(0).devName()));new Check(all.get(0).devName());}}";
+        String expected =
+                """
+                class Example {
+                    void run() {
+                        Assertions.assertEquals("Duke Jakarta", all.get(0).devName());
+                        check(all.get(0).devName());
+                        check((all.get(0).devName()));
+                        new Check(all.get(0).devName());
+                    }
+                }
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void factoryNameLengthDoesNotChangeChainOwnership() {
+        for (String method : new String[] {"make", "build"}) {
+            String input =
+                    "class Example{void run(){" + method
+                            + "(invoke(one,two,three,four,five,six,seven)).first().second();}}";
+            String expected =
+                    """
+                    class Example {
+                        void run() {
+                            %s(invoke(one, two, three, four, five, six, seven))
+                                    .first()
+                                    .second();
+                        }
+                    }
+                    """.formatted(method);
+
+            String formatted = JfmtTestSupport.format(input);
+
+            assertEquals(expected, formatted, method);
+            assertEquals(formatted, JfmtTestSupport.format(formatted), method);
+        }
+    }
+
+    @Test
+    void enclosingChainOwnsFactoryAndConstructorArgumentWrapping() {
+        String input =
+                "class Example{void run(){Object constructorResult=new Factory(one,two,three,four,five,six,seven).first().second().third();Object factoryResult=Factory.make(one,two,three,four,five,six,seven).first().second().third();}}";
+        String expected =
+                """
+                class Example {
+                    void run() {
+                        Object constructorResult = new Factory(one, two, three, four, five, six, seven)
+                                .first()
+                                .second()
+                                .third();
+                        Object factoryResult = Factory.make(one, two, three, four, five, six, seven)
+                                .first()
+                                .second()
+                                .third();
+                    }
+                }
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void enclosingChainBreakKeepsNestedGettersTogether() {
+        String input =
+                "class Example{void run(){Object result=jdbcClient.sql(\"s\").query(T.class).map(all.get(0).devName());Object other=jdbcClient.sql(\"s\").query(T.class).map(all.get(0).devName()).toList();}}";
+        String expected =
+                """
+                class Example {
+                    void run() {
+                        Object result = jdbcClient.sql("s")
+                                .query(T.class)
+                                .map(all.get(0).devName());
+                        Object other = jdbcClient.sql("s")
+                                .query(T.class)
+                                .map(all.get(0).devName())
+                                .toList();
+                    }
+                }
+                """;
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void keepsALongFinalNestedSelectorTogether() {
+        String method = "method" + "x".repeat(200);
+        String input = "class Example{void run(){check(all.get(0)." + method + "());}}";
+        String expected =
+                """
+                class Example {
+                    void run() {
+                        check(all.get(0).%s());
+                    }
+                }
+                """.formatted(method);
+
+        String formatted = JfmtTestSupport.format(input);
+
+        assertEquals(expected, formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+    }
+
+    @Test
+    void breaksChainsContainingStreamAndBuilderInvocations() {
+        for (String sql : new String[] {"s", "SELECT id, dev_name FROM engineers ORDER BY id"}) {
+            for (String method : new String[] {"stream", "parallelStream", "toBuilder"}) {
+                String terminal = method.equals("toBuilder") ? "build" : "toList";
+                String input =
+                        "class Example{void run(){List<DevSummary> all=jdbcClient.sql(\"" + sql
+                                + "\").query(DevSummary.class)." + method + "()." + terminal + "();}}";
+                String expected =
+                        """
+                        class Example {
+                            void run() {
+                                List<DevSummary> all = jdbcClient.sql("%s")
+                                        .query(DevSummary.class)
+                                        .%s()
+                                        .%s();
+                            }
+                        }
+                        """.formatted(sql, method, terminal);
+
+                String formatted = JfmtTestSupport.format(input);
+
+                assertEquals(expected, formatted, method);
+                assertEquals(formatted, JfmtTestSupport.format(formatted), method);
+            }
+        }
+    }
+
+    @Test
+    void formatsLoggingChainsLikeOtherChains() {
+        for (String method : new String[] {"log", "write"}) {
+            String input =
+                    "class Example{void run(){logger.atInfo().withCause(error)." + method
+                            + "(\"message\");}}";
+            String expected =
+                    """
+                    class Example {
+                        void run() {
+                            logger.atInfo()
+                                  .withCause(error)
+                                  .%s("message");
+                        }
+                    }
+                    """.formatted(method);
+
+            String formatted = JfmtTestSupport.format(input);
+
+            assertEquals(expected, formatted, method);
+            assertEquals(formatted, JfmtTestSupport.format(formatted), method);
+        }
+    }
+
+    @Test
+    void formatsChainsRegardlessOfStreamOrBuilderMethodNames() {
+        for (String method : new String[] {"stream", "parallelStream", "toBuilder", "flow"}) {
+            String input =
+                    "class Example{void run(){var result=values." + method
+                            + "().map(transform).finish();}}";
+            String expected =
+                    """
+                    class Example {
+                        void run() {
+                            var result = values.%s()
+                                               .map(transform)
+                                               .finish();
+                        }
+                    }
+                    """.formatted(method);
+
+            String formatted = JfmtTestSupport.format(input);
+
+            assertEquals(expected, formatted, method);
+            assertEquals(formatted, JfmtTestSupport.format(formatted), method);
+        }
     }
 
     @Test
@@ -2368,8 +2963,8 @@ class JfmtStyleTest {
                 class Example {
                     Object collect() {
                         return values.stream()
-                                .filter(value -> value.isAvailable())
-                                .collect(Collectors.toMap(primaryKeyMapperWithLongName, secondaryValueMapperWithLongName, mergeFunctionWithLongName, LinkedHashMap::new));
+                                     .filter(value -> value.isAvailable())
+                                     .collect(Collectors.toMap(primaryKeyMapperWithLongName, secondaryValueMapperWithLongName, mergeFunctionWithLongName, LinkedHashMap::new));
                     }
                 }
                 """;
@@ -2510,9 +3105,9 @@ class JfmtStyleTest {
                 class Example {
                     Object run() {
                         return values.stream()
-                                .map(value -> transformValueWithConfiguration(value, configuration, additionalConfiguration, environment))
-                                .filter(value -> value.isAvailable())
-                                .toList();
+                                     .map(value -> transformValueWithConfiguration(value, configuration, additionalConfiguration, environment))
+                                     .filter(value -> value.isAvailable())
+                                     .toList();
                     }
                 }
                 """;

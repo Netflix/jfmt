@@ -113,15 +113,16 @@ import static java.util.Objects.requireNonNull;
 
 final class OrderService {
     List<Order> readyOrders(List<Order> orders, Instant cutoff) {
-        return requireNonNull(orders).stream()
+        return requireNonNull(orders)
+                .stream()
                 .filter(order ->
                         order.createdAt().isBefore(cutoff)
                                 && order.isPaid()
-                                && order.items().stream()
+                                && order.items()
+                                        .stream()
                                         .allMatch(Item::inStock)
                                 && !order.isCancelled())
-                .map(order -> new Order(order.id(), order.customer(), order.items(),
-                        Status.READY))
+                .map(order -> new Order(order.id(), order.customer(), order.items(), Status.READY))
                 .toList();
     }
 
@@ -134,6 +135,21 @@ final class OrderService {
 ```
 
 Block indentation is 4 spaces and continuation indentation is 8 spaces. Line breaks follow Java structure, ordinary imports precede static imports, and braces are inserted around the `if` body.
+
+Stream, builder, and logging calls follow the same chain rules. Parentheses and field accesses do not hide earlier calls, and constructors count as calls too. Short chains such as `all.get(0).devName()` can stay together when passed as an argument.
+
+### Annotation members
+
+Small annotation member lists stay on one line. When the list spans multiple lines, each named member gets its own line:
+
+```java
+@DataSourceDefinition(
+        name = "java:comp/MyDS",
+        className = "org.postgresql.ds.PGSimpleDataSource",
+        url = "jdbc:postgresql://localhost:5432/postgres",
+        user = "postgres",
+        password = "postgres")
+```
 
 ### Semantic import normalization
 
