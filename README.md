@@ -25,12 +25,21 @@ The formatter is built on [google-java-format](https://github.com/google/google-
 
 Follow the `ja` [Installation Guide](https://github.com/Netflix/ja#installation) to create a `ja`-enabled development JDK. The JDK includes the `jfmt` command, and `ja fmt` uses it when formatting source modules.
 
-For standalone use, download the modular JAR from [Maven Central](https://central.sonatype.com/artifact/com.netflix/com.netflix.tools.jfmt). JDK 25 or later is required. The JAR contains its runtime dependencies and can be run directly or as module `com.netflix.tools.jfmt`:
+For standalone use, download the modular JAR from [Maven Central](https://central.sonatype.com/artifact/com.netflix/com.netflix.tools.jfmt) and use a standard JDK 25 or later. The JAR includes its runtime dependencies, but needs access to javac's internal packages:
 
 ```sh
-java -jar com.netflix.tools.jfmt-VERSION.jar File.java
-java --module-path com.netflix.tools.jfmt-VERSION.jar --module com.netflix.tools.jfmt File.java
+java \
+    --add-exports jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED \
+    --add-exports jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED \
+    --add-exports jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED \
+    --add-exports jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED \
+    --add-exports jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED \
+    --add-exports jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED \
+    --add-exports jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED \
+    -jar com.netflix.tools.jfmt-VERSION.jar File.java
 ```
+
+`ja` and the installed `jfmt` launcher add these exports automatically. The wiki also has the [module-path launch command](https://github.com/Netflix/jfmt/wiki/Formatting-Source#standalone-jar), if you prefer to run the JAR as module `com.netflix.tools.jfmt`.
 
 JMOD artifacts are also published for building custom runtime images.
 
