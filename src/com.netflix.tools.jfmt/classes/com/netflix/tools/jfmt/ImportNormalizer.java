@@ -92,23 +92,19 @@ final class ImportNormalizer {
                 .orElseThrow(() -> new AttributionException("Java compiler is not available"));
 
         List<String> options = attributionOptions(compilerOptions);
-        List<Path> descriptors = sources.keySet().stream()
-                .filter(path -> path.getFileName()
-                                    .toString()
-                                    .equals("module-info.java"))
-                .toList();
+        Map<Path, Path> descriptors = moduleDescriptors(compiler, sources.keySet(), options);
         Map<Path, Boolean> satisfiableModules = new HashMap<>();
-        for (Path descriptor : descriptors) {
-            satisfiableModules.put(descriptor.getParent(), requirementsSatisfied(compiler, descriptor, options));
+        for (Path descriptor : new LinkedHashSet<>(descriptors.values())) {
+            satisfiableModules.put(descriptor, requirementsSatisfied(compiler, descriptor, options));
         }
 
         Map<Path, String> namedSources = new LinkedHashMap<>();
         Map<Path, String> unnamedSources = new LinkedHashMap<>();
         for (var source : sources.entrySet()) {
-            Path module = enclosingModule(source.getKey(), descriptors);
-            if (module == null) {
+            Path descriptor = descriptors.get(source.getKey());
+            if (descriptor == null) {
                 unnamedSources.put(source.getKey(), source.getValue());
-            } else if (satisfiableModules.get(module)) {
+            } else if (satisfiableModules.get(descriptor)) {
                 namedSources.put(source.getKey(), source.getValue());
             }
         }
@@ -124,12 +120,45 @@ final class ImportNormalizer {
         return result;
     }
 
-    private static Path enclosingModule(Path source, List<Path> descriptors) {
+    private static Map<Path, Path> moduleDescriptors(JavaCompiler compiler, Set<Path> sources, List<String> options) throws AttributionException {
+        List<Path> explicitDescriptors = sources.stream()
+                .filter(path -> path.getFileName().toString().equals("module-info.java"))
+                .toList();
+        try (var fileManager = compiler.getStandardFileManager(null, null, null)) {
+            for (int i = 0; i < options.size(); i++) {
+                if (options.get(i).equals("--module-source-path")) {
+                    fileManager.handleOption("--module-source-path", List.of(options.get(++i)).iterator());
+                }
+            }
+            Map<Path, Path> result = new LinkedHashMap<>();
+            for (Path source : sources) {
+                Path descriptor = enclosingDescriptor(source, explicitDescriptors);
+                if (fileManager.hasLocation(StandardLocation.MODULE_SOURCE_PATH)) {
+                    var file = fileManager.getJavaFileObjectsFromPaths(List.of(source)).iterator().next();
+                    var location = fileManager.getLocationForModule(StandardLocation.MODULE_SOURCE_PATH, file);
+                    if (location != null) {
+                        var moduleInfo = fileManager.getJavaFileForInput(location, "module-info", JavaFileObject.Kind.SOURCE);
+                        if (moduleInfo != null) {
+                            descriptor = fileManager.asPath(moduleInfo).normalize();
+                        }
+                    }
+                }
+                if (descriptor != null) {
+                    result.put(source, descriptor);
+                }
+            }
+            return result;
+        } catch (IOException | IllegalArgumentException e) {
+            throw attributionFailure(e);
+        }
+    }
+
+    private static Path enclosingDescriptor(Path source, List<Path> descriptors) {
         Path result = null;
         for (Path descriptor : descriptors) {
             Path root = descriptor.getParent();
-            if (source.startsWith(root) && (result == null || root.getNameCount() > result.getNameCount())) {
-                result = root;
+            if (source.startsWith(root) && (result == null || root.getNameCount() > result.getParent().getNameCount())) {
+                result = descriptor;
             }
         }
         return result;
