@@ -95,6 +95,8 @@ final class JfmtCommandLine {
         ParsedArguments parsed = commandLine.parse(arguments);
         List<String> modules = parsed.values(module);
         String selectedModules = modules.isEmpty() ? null : modules.getLast();
+        List<String> sourcePaths = parsed.values(sourcePath);
+        String selectedSourcePath = sourcePaths.isEmpty() ? null : sourcePaths.getLast();
         List<String> compilerOptions = new ArrayList<>();
         addLast(compilerOptions, "--class-path", parsed.values(classPath));
         addLast(compilerOptions, "--module-path", parsed.values(modulePath));
@@ -116,11 +118,11 @@ final class JfmtCommandLine {
         if (parsed.contains(enablePreview)) {
             compilerOptions.add("--enable-preview");
         }
-        return new Options(parsed.contains(check), parsed.values(moduleSourcePath), selectedModules,
+        return new Options(parsed.contains(check), selectedSourcePath, parsed.values(moduleSourcePath), selectedModules,
                 List.copyOf(compilerOptions), parsed.operands(), parsed.contains(help));
     }
 
-    record Options(boolean check, List<String> moduleSourcePaths, String modules,
+    record Options(boolean check, String sourcePath, List<String> moduleSourcePaths, String modules,
                    List<String> compilerOptions, List<String> files, boolean help) {}
 
     private static void addLast(List<String> result, String option, List<String> values) {

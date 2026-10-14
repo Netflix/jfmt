@@ -17,7 +17,6 @@ package com.netflix.tools.jfmt;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
-import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,6 +26,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -34,8 +34,12 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.spi.ToolProvider;
-import java.util.stream.Stream;
+import javax.tools.JavaCompiler;
+import javax.tools.JavaFileManager.Location;
+import javax.tools.JavaFileObject;
 import javax.tools.OptionChecker;
+import javax.tools.StandardJavaFileManager;
+import javax.tools.StandardLocation;
 
 import com.netflix.tools.jfmt.CommandLine.ConfigurationException;
 import com.netflix.tools.jfmt.ImportNormalizer.AttributionException;
@@ -122,7 +126,7 @@ public class JfmtToolProvider implements ToolProvider, OptionChecker {
                 .map(Path::of)
                 .map(Path::normalize)
                 .forEach(files::add);
-        if (!collectSources(moduleSourcePaths, selectedModules, files, err)) {
+        if (!collectSources(options.sourcePath(), moduleSourcePaths, selectedModules, files, err)) {
             return 1;
         }
 
@@ -169,6 +173,7 @@ public class JfmtToolProvider implements ToolProvider, OptionChecker {
 
     private static void printUsage(PrintWriter err) {
         err.println("Usage: jfmt [--check] <files...>");
+        err.println("       jfmt [--check] --source-path <path>");
         err.println("       jfmt [--check] --module-source-path <path> [-m <module>]");
         err.println("       jfmt -");
     }
@@ -181,124 +186,64 @@ public class JfmtToolProvider implements ToolProvider, OptionChecker {
         return modules;
     }
 
-    private boolean collectSources(List<String> pathLists, Set<String> selectedModules, Set<Path> files,
+    private boolean collectSources(String sourcePath, List<String> moduleSourcePaths, Set<String> selectedModules, Set<Path> files,
             PrintWriter err) {
-        Set<String> foundModules = new LinkedHashSet<>();
-        for (String pathList : pathLists) {
-            try {
-                collectModuleSourcePath(pathList, selectedModules, foundModules, files);
-            } catch (IOException | UncheckedIOException | IllegalArgumentException e) {
-                err.println(pathList + ": " + e.getMessage());
-                return false;
-            }
+        if (sourcePath == null && moduleSourcePaths.isEmpty()) {
+            return true;
         }
-        if (selectedModules != null) {
-            for (String module : selectedModules) {
-                if (!foundModules.contains(module)) {
-                    err.println("module " + module + " not found in module source path");
-                    return false;
+        JavaCompiler compiler = ServiceLoader.load(JavaCompiler.class).findFirst().orElseThrow();
+        try (var fileManager = compiler.getStandardFileManager(null, null, null)) {
+            if (sourcePath != null) {
+                fileManager.handleOption("--source-path", List.of(sourcePath).iterator());
+            }
+            for (String pathList : moduleSourcePaths) {
+                fileManager.handleOption("--module-source-path", List.of(pathList).iterator());
+            }
+            if (selectedModules == null && !files.isEmpty()) {
+                return true;
+            }
+            Map<Path, Path> selectedFiles = new LinkedHashMap<>();
+            for (Path file : files) {
+                selectedFiles.putIfAbsent(file.toRealPath(), file);
+            }
+            if (selectedModules != null) {
+                for (String module : selectedModules) {
+                    var location = fileManager.getLocationForModule(StandardLocation.MODULE_SOURCE_PATH, module);
+                    if (location == null || fileManager.getJavaFileForInput(location, "module-info", JavaFileObject.Kind.SOURCE) == null) {
+                        err.println("module " + module + " not found in module source path");
+                        return false;
+                    }
+                    collectSources(fileManager, location, selectedFiles);
+                }
+            } else {
+                if (sourcePath != null) {
+                    collectSources(fileManager, StandardLocation.SOURCE_PATH, selectedFiles);
+                }
+                if (!moduleSourcePaths.isEmpty()) {
+                    for (var locations : fileManager.listLocationsForModules(StandardLocation.MODULE_SOURCE_PATH)) {
+                        for (var location : locations) {
+                            if (fileManager.getJavaFileForInput(location, "module-info", JavaFileObject.Kind.SOURCE) != null) {
+                                collectSources(fileManager, location, selectedFiles);
+                            }
+                        }
+                    }
                 }
             }
-        }
-        return true;
-    }
-
-    private void collectModuleSourcePath(String value, Set<String> selectedModules, Set<String> foundModules,
-            Set<Path> files)
-            throws IOException {
-        int equals = value.indexOf('=');
-        if (equals > 0) {
-            if (equals == value.length() - 1) {
-                throw new IllegalArgumentException("module-specific path is empty");
-            }
-            String moduleName = value.substring(0, equals);
-            Path root = requireModuleDirectory(Path.of(value.substring(equals + 1)));
-            if (selectedModules == null || selectedModules.contains(moduleName)) {
-                foundModules.add(moduleName);
-                collectJavaFiles(root, files);
-            }
-            return;
-        }
-
-        int wildcard = value.indexOf('*');
-        if (wildcard >= 0) {
-            if (value.indexOf('*', wildcard + 1) >= 0) {
-                throw new IllegalArgumentException("module source path contains more than one wildcard");
-            }
-            collectModulePattern(value, wildcard, selectedModules, foundModules, files);
-            return;
-        }
-
-        Path root = requireDirectory(Path.of(value));
-        if (Files.isRegularFile(root.resolve("module-info.java"))) {
-            Path fileName = root.getFileName();
-            String moduleName = fileName == null ? "" : fileName.toString();
-            if (selectedModules == null || selectedModules.contains(moduleName)) {
-                foundModules.add(moduleName);
-                collectJavaFiles(root, files);
-            }
-            return;
-        }
-        try (Stream<Path> children = Files.list(root)) {
-            for (Path module : children.filter(Files::isDirectory)
-                    .filter(path -> Files.isRegularFile(path.resolve("module-info.java")))
-                    .toList()) {
-                String moduleName = module.getFileName().toString();
-                if (selectedModules == null || selectedModules.contains(moduleName)) {
-                    foundModules.add(moduleName);
-                    collectJavaFiles(module, files);
-                }
-            }
+            files.clear();
+            files.addAll(selectedFiles.values());
+            return true;
+        } catch (IOException | IllegalArgumentException e) {
+            err.println(e.getMessage());
+            return false;
         }
     }
 
-    private void collectModulePattern(String value, int wildcard, Set<String> selectedModules,
-            Set<String> foundModules, Set<Path> files)
-            throws IOException {
-        String prefix = value.substring(0, wildcard);
-        String suffix = value.substring(wildcard + 1);
-        while (suffix.startsWith("/") || suffix.startsWith("\\")) {
-            suffix = suffix.substring(1);
-        }
-        Path root = requireDirectory(Path.of(prefix.isEmpty() ? "." : prefix));
-        try (Stream<Path> children = Files.list(root)) {
-            for (Path child : children.filter(Files::isDirectory).toList()) {
-                String moduleName = child.getFileName().toString();
-                if (selectedModules != null && !selectedModules.contains(moduleName)) {
-                    continue;
-                }
-                Path module = suffix.isEmpty() ? child : child.resolve(suffix);
-                if (Files.isRegularFile(module.resolve("module-info.java"))) {
-                    foundModules.add(moduleName);
-                    collectJavaFiles(module, files);
-                }
+    private static void collectSources(StandardJavaFileManager fileManager, Location location, Map<Path, Path> files) throws IOException {
+        for (var source : fileManager.list(location, "", Set.of(JavaFileObject.Kind.SOURCE), true)) {
+            if ("file".equals(source.toUri().getScheme())) {
+                Path path = fileManager.asPath(source).normalize();
+                files.putIfAbsent(path.toRealPath(), path);
             }
-        }
-    }
-
-    private Path requireModuleDirectory(Path path) {
-        Path root = requireDirectory(path);
-        if (!Files.isRegularFile(root.resolve("module-info.java"))) {
-            throw new IllegalArgumentException("module-info.java not found in " + root);
-        }
-        return root;
-    }
-
-    private Path requireDirectory(Path path) {
-        if (!Files.isDirectory(path)) {
-            throw new IllegalArgumentException("not a directory: " + path);
-        }
-        return path;
-    }
-
-    private void collectJavaFiles(Path root, Set<Path> files) throws IOException {
-        try (Stream<Path> paths = Files.walk(root)) {
-            paths.filter(Files::isRegularFile)
-                 .filter(path -> path.getFileName()
-                                     .toString()
-                                     .endsWith(".java"))
-                 .map(Path::normalize)
-                 .forEach(files::add);
         }
     }
 
