@@ -19,6 +19,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.lang.module.ModuleFinder;
 import java.lang.module.ModuleReference;
+import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -200,6 +201,62 @@ class JfmtToolTest {
                 }
                 """,
                 Files.readString(source));
+    }
+
+    @Test
+    void retainsExplicitJavaLangImportsWhenWildcardsRemain() {
+        for (String wildcard : new String[] {"import custom.*;", "import static custom.Types.*;"}) {
+            String input = "import java.lang.Thread;" + wildcard + "class Example{Thread thread;Other other;}";
+            String formatted = JfmtTestSupport.format(input);
+
+            assertTrue(formatted.contains("import java.lang.Thread;"), formatted);
+            assertTrue(formatted.contains(wildcard), formatted);
+            assertEquals(formatted, JfmtTestSupport.format(formatted));
+        }
+    }
+
+    @Test
+    void retainsUsedExplicitJavaLangImportsWithoutWildcards() {
+        String formatted = JfmtTestSupport.format("package custom;import java.lang.Thread;class Example{Thread thread;}");
+
+        assertTrue(formatted.contains("import java.lang.Thread;"), formatted);
+        assertEquals(formatted, JfmtTestSupport.format(formatted));
+        assertEquals("class Example {}\n", JfmtTestSupport.format("import java.lang.Thread;class Example{}"));
+    }
+
+    @Test
+    void preservesExplicitTypeBindingWhenExpandingWildcards() throws Exception {
+        Path dependency = write(temporaryDirectory.resolve("custom/Thread.java"), "package custom;public class Thread{}");
+        Path other = write(temporaryDirectory.resolve("custom/Other.java"), "package custom;public class Other{}");
+        Path types = write(temporaryDirectory.resolve("custom/Types.java"), "package custom;public class Types{public static class Thread{}public static class Other{}}");
+        Path dependencies = Files.createDirectories(temporaryDirectory.resolve("dependencies"));
+        assertEquals(
+                0,
+                javax.tools.ToolProvider.getSystemJavaCompiler().run(
+                        null,
+                        null,
+                        null,
+                        "-d",
+                        dependencies.toString(),
+                        dependency.toString(),
+                        other.toString(),
+                        types.toString()));
+
+        for (boolean staticImport : new boolean[] {false, true}) {
+            Path directory = temporaryDirectory.resolve(staticImport ? "static" : "ordinary");
+            String wildcard = staticImport ? "import static custom.Types.*;" : "import custom.*;";
+            Path source = write(directory.resolve("Example.java"), "import java.lang.Thread;" + wildcard + "class Example{Thread thread;Other other;}");
+            String originalType = compileFieldType(source, dependencies, directory.resolve("before"));
+
+            Invocation invocation = run("", "-cp", dependencies.toString(), source.toString());
+
+            assertEquals(0, invocation.exitCode(), invocation.error());
+            assertEquals("java.lang.Thread", originalType);
+            assertEquals(originalType, compileFieldType(source, dependencies, directory.resolve("after")),
+                    Files.readString(source));
+            assertEquals(0, run("", "--check", "-cp", dependencies.toString(), source.toString())
+                    .exitCode());
+        }
     }
 
     @Test
@@ -1057,6 +1114,21 @@ class JfmtToolTest {
 
     private static String formattedModuleClass(String className) {
         return "package example;\n\nclass " + className + " {\n    int value;\n}\n";
+    }
+
+    private static String compileFieldType(Path source, Path dependencies, Path output) throws Exception {
+        Files.createDirectories(output);
+        assertEquals(
+                0,
+                javax.tools.ToolProvider.getSystemJavaCompiler().run(null, null, null, "-cp", dependencies.toString(),
+                        "-d", output.toString(), source.toString()));
+        try (var loader = new URLClassLoader(new java.net.URL[] {output.toUri().toURL(), dependencies.toUri().toURL()},
+                ClassLoader.getPlatformClassLoader())) {
+            return loader.loadClass("Example")
+                         .getDeclaredField("thread")
+                         .getType()
+                         .getName();
+        }
     }
 
     private static Path write(Path path, String contents) throws Exception {

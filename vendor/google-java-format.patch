@@ -1,5 +1,5 @@
 diff --git a/Doc.java b/Doc.java
-index 4a6c7a4b300cb990f8812d3e07953ebdf6cdf71c..b34d247ac3ba5d10ba216c035f7dac39bac52393 100644
+index 4a6c7a4b300cb990f8812d3e07953ebdf6cdf71c..96ed5a0394f2c2829eb4ca98d08dc9ae6872a12a 100644
 --- a/Doc.java
 +++ b/Doc.java
 @@ -64,14 +64,12 @@ public abstract class Doc {
@@ -238,6 +238,29 @@ index 4a6c7a4b300cb990f8812d3e07953ebdf6cdf71c..b34d247ac3ba5d10ba216c035f7dac39
          return state.withColumn(state.column + flat.length());
        }
      }
+@@ -702,9 +766,6 @@ public abstract class Doc {
+       if (tok.isComment()) {
+         if (idx > 0) {
+           return idx;
+-        } else if (tok.isSlashSlashComment() && !tok.getOriginalText().startsWith("// ")) {
+-          // Account for line comments with missing spaces, see computeFlat.
+-          return tok.length() + 1;
+         } else {
+           return reformatParameterComment(tok).map(String::length).orElse(tok.length());
+         }
+@@ -714,12 +775,6 @@ public abstract class Doc {
+ 
+     @Override
+     String computeFlat() {
+-      // TODO(cushon): commentsHelper.rewrite doesn't get called for spans that fit in a single
+-      // line. That's fine for multi-line comment reflowing, but problematic for adding missing
+-      // spaces in line comments.
+-      if (tok.isSlashSlashComment() && !tok.getOriginalText().startsWith("// ")) {
+-        return "// " + tok.getOriginalText().substring("//".length());
+-      }
+       return reformatParameterComment(tok).orElse(tok.getOriginalText());
+     }
+ 
 diff --git a/Indent.java b/Indent.java
 index 7d7e1e9ccb264a72b7f044fec64540845b6e7b8b..944305bed0b17d9947a699fee3e5c791ad4561bc 100644
 --- a/Indent.java
@@ -373,6 +396,39 @@ index 7d7e1e9ccb264a72b7f044fec64540845b6e7b8b..944305bed0b17d9947a699fee3e5c791
      }
  
      @Override
+diff --git a/OpsBuilder.java b/OpsBuilder.java
+index 6ca0c0f8436bdb246e4cacf3faa8d2087f3bb597..8357d9e1cb754ef2007667d66f222cc501ef92de 100644
+--- a/OpsBuilder.java
++++ b/OpsBuilder.java
+@@ -515,6 +515,8 @@ public final class OpsBuilder {
+            * Regular input token. Copy out toksBefore before token, and toksAfter after it. Insert
+            * this token's toksBefore at position j.
+            */
++          // Comments before a closing brace belong to the body even when it has no statements.
++          boolean closingBrace = token.getTok().getText().equals("}");
+           int newlines = 0; // Count of newlines in a row.
+           boolean space = false; // Do we need an extra space after a previous "/*" comment?
+           boolean lastWasComment = false; // Was the last thing we output a comment?
+@@ -526,7 +528,9 @@ public final class OpsBuilder {
+               tokOps.put(
+                   j,
+                   Doc.Break.make(
+-                      tokBefore.isSlashSlashComment() ? Doc.FillMode.FORCED : Doc.FillMode.UNIFIED,
++                      tokBefore.isSlashSlashComment() || closingBrace
++                          ? Doc.FillMode.FORCED
++                          : Doc.FillMode.UNIFIED,
+                       "",
+                       tokenOp.getPlusIndentCommentsBefore()));
+               tokOps.putAll(j, makeComment(tokBefore));
+@@ -545,7 +549,7 @@ public final class OpsBuilder {
+             // Force a line break after two newlines in a row following a line or block comment
+             output.blankLine(token.getTok().getIndex(), BlankLineWanted.YES);
+           }
+-          if (lastWasComment && newlines > 0) {
++          if (lastWasComment && (newlines > 0 || closingBrace)) {
+             tokOps.put(j, Doc.Break.makeForced());
+           } else if (space) {
+             tokOps.put(j, SPACE);
 diff --git a/Output.java b/Output.java
 index d30762e2445e0d9b885c5ab25ddd05965e3fbc71..8a77e84304d5714eab89689e9cc40c412ede90f6 100644
 --- a/Output.java
@@ -1186,7 +1242,7 @@ index d7257f07157b85941e045130d48f39e888bfd748..e7f71ae9f098cd65dfb06764490b8269
      try {
        @SuppressWarnings("unchecked")
 diff --git a/java/JavaInputAstVisitor.java b/java/JavaInputAstVisitor.java
-index 30d24252b38321d12fa31550aac5c536d3ed91be..ceb4df3bd8b5c88eee2a467baa411d2478c5b5a6 100644
+index 30d24252b38321d12fa31550aac5c536d3ed91be..2c113da50b11a707018d8b11cd3b4abcaf17a9b9 100644
 --- a/java/JavaInputAstVisitor.java
 +++ b/java/JavaInputAstVisitor.java
 @@ -270,15 +270,23 @@ class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
@@ -1937,6 +1993,15 @@ index 30d24252b38321d12fa31550aac5c536d3ed91be..ceb4df3bd8b5c88eee2a467baa411d24
      } else if ((cols = argumentsAreTabular(expressions)) != -1) {
        builder.open(plusTwo);
        token("{");
+@@ -541,7 +1245,7 @@ class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
+         builder.close();
+         afterFirstToken = true;
+       }
+-      builder.breakOp(minusTwo);
++      builder.forcedBreak(minusTwo);
+       builder.close();
+       token("}", plusTwo);
+     } else {
 @@ -562,6 +1266,20 @@ class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
        }
        boolean shortItems = hasOnlyShortItems(expressions);
@@ -3257,7 +3322,7 @@ index 68d03a6a36f1a17f8c176c960ba9fd1b357048d3..4af6621877aa3fdfbb67d54ce9509db2
      do {
        scanner.nextToken();
 diff --git a/java/RemoveUnusedImports.java b/java/RemoveUnusedImports.java
-index 30a54552969a32a7afb161084e8d61f6f63fc118..60cdbfdbcd131592dc975b420818a7410795a5db 100644
+index 30a54552969a32a7afb161084e8d61f6f63fc118..e9476ae5fcc50ca2baac0f025b13d80d2bf03efe 100644
 --- a/java/RemoveUnusedImports.java
 +++ b/java/RemoveUnusedImports.java
 @@ -218,8 +218,14 @@ public class RemoveUnusedImports {
@@ -3276,6 +3341,16 @@ index 30a54552969a32a7afb161084e8d61f6f63fc118..60cdbfdbcd131592dc975b420818a741
      if (!errorDiagnostics.isEmpty()) {
        // error handling is done during formatting
        throw FormatterException.fromJavacDiagnostics(errorDiagnostics);
+@@ -267,9 +273,6 @@ public class RemoveUnusedImports {
+       String simpleName) {
+     JCFieldAccess qualifiedIdentifier = getQualifiedIdentifier(importTree);
+     String qualifier = qualifiedIdentifier.getExpression().toString();
+-    if (qualifier.equals("java.lang")) {
+-      return true;
+-    }
+     if (unit.getPackageName() != null && unit.getPackageName().toString().equals(qualifier)) {
+       return true;
+     }
 diff --git a/java/Trees.java b/java/Trees.java
 index a213edc8595864d3186143741195f4e9bef1789f..7fdcd8765f0e56f364ff06520230fb47cc3b071b 100644
 --- a/java/Trees.java

@@ -1266,7 +1266,7 @@ class JavaInputAstVisitor extends TreePathScanner<Void, Void> {
         builder.close();
         afterFirstToken = true;
       }
-      builder.breakOp(minusTwo);
+      builder.forcedBreak(minusTwo);
       builder.close();
       token("}", plusTwo);
     } else {

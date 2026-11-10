@@ -766,9 +766,6 @@ public abstract class Doc {
       if (tok.isComment()) {
         if (idx > 0) {
           return idx;
-        } else if (tok.isSlashSlashComment() && !tok.getOriginalText().startsWith("// ")) {
-          // Account for line comments with missing spaces, see computeFlat.
-          return tok.length() + 1;
         } else {
           return reformatParameterComment(tok).map(String::length).orElse(tok.length());
         }
@@ -778,12 +775,6 @@ public abstract class Doc {
 
     @Override
     String computeFlat() {
-      // TODO(cushon): commentsHelper.rewrite doesn't get called for spans that fit in a single
-      // line. That's fine for multi-line comment reflowing, but problematic for adding missing
-      // spaces in line comments.
-      if (tok.isSlashSlashComment() && !tok.getOriginalText().startsWith("// ")) {
-        return "// " + tok.getOriginalText().substring("//".length());
-      }
       return reformatParameterComment(tok).orElse(tok.getOriginalText());
     }
 

@@ -515,6 +515,8 @@ public final class OpsBuilder {
            * Regular input token. Copy out toksBefore before token, and toksAfter after it. Insert
            * this token's toksBefore at position j.
            */
+          // Comments before a closing brace belong to the body even when it has no statements.
+          boolean closingBrace = token.getTok().getText().equals("}");
           int newlines = 0; // Count of newlines in a row.
           boolean space = false; // Do we need an extra space after a previous "/*" comment?
           boolean lastWasComment = false; // Was the last thing we output a comment?
@@ -526,7 +528,9 @@ public final class OpsBuilder {
               tokOps.put(
                   j,
                   Doc.Break.make(
-                      tokBefore.isSlashSlashComment() ? Doc.FillMode.FORCED : Doc.FillMode.UNIFIED,
+                      tokBefore.isSlashSlashComment() || closingBrace
+                          ? Doc.FillMode.FORCED
+                          : Doc.FillMode.UNIFIED,
                       "",
                       tokenOp.getPlusIndentCommentsBefore()));
               tokOps.putAll(j, makeComment(tokBefore));
@@ -545,7 +549,7 @@ public final class OpsBuilder {
             // Force a line break after two newlines in a row following a line or block comment
             output.blankLine(token.getTok().getIndex(), BlankLineWanted.YES);
           }
-          if (lastWasComment && newlines > 0) {
+          if (lastWasComment && (newlines > 0 || closingBrace)) {
             tokOps.put(j, Doc.Break.makeForced());
           } else if (space) {
             tokOps.put(j, SPACE);

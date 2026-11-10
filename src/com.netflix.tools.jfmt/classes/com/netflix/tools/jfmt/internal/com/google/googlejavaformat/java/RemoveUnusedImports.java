@@ -273,9 +273,6 @@ public class RemoveUnusedImports {
       String simpleName) {
     JCFieldAccess qualifiedIdentifier = getQualifiedIdentifier(importTree);
     String qualifier = qualifiedIdentifier.getExpression().toString();
-    if (qualifier.equals("java.lang")) {
-      return true;
-    }
     if (unit.getPackageName() != null && unit.getPackageName().toString().equals(qualifier)) {
       return true;
     }
