@@ -498,6 +498,7 @@ final class ImportNormalizer {
         private final List<WildcardImport> wildcards;
         private final Map<String, Set<String>> typeBindings = new HashMap<>();
         private final Set<String> valueBindings = new HashSet<>();
+        private final Set<String> explicitTypeNames = new HashSet<>();
         private final Set<QualifiedType> qualifiedTypes = new LinkedHashSet<>();
         private boolean inImport;
 
@@ -523,6 +524,9 @@ final class ImportNormalizer {
                 ResolvedType resolved = resolver.longestType(imported);
                 if (resolved != null && resolved.componentCount() == resolved.totalComponents()) {
                     recordTypeBinding(resolved.type());
+                    explicitTypeNames.add(resolved.type()
+                            .getSimpleName()
+                            .toString());
                 }
             }
         }
@@ -618,6 +622,11 @@ final class ImportNormalizer {
         }
 
         private void recordWildcardUse(String name, boolean expressionQualifier, boolean staticOnly) {
+            if (!staticOnly
+                    && explicitTypeNames.contains(name)
+                    && (!expressionQualifier || !valueBindings.contains(name))) {
+                return;
+            }
             List<WildcardImport> matches = wildcards.stream()
                     .filter(wildcard -> !staticOnly || wildcard.isStatic())
                     .filter(wildcard -> wildcard.matches(name))
